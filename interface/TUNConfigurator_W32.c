@@ -15,9 +15,34 @@
 #include "interface/TUNConfigurator.h"
 #include "interface/TUNInterface.h"
 
-int TUNConfigurator_configure(struct TUNInterface* iface,
-                              uint8_t address[16],
-                              int prefixLen)
+void* TUNConfigurator_initTun(const char* interfaceName,
+                              char assignedInterfaceName[TUNConfigurator_IFNAMSIZ],
+                              struct Log* logger,
+                              struct Except* eh)
 {
-    return 0;
+    return NULL;
+}
+
+void TUNConfigurator_addIp4Address(const char* interfaceName,
+                                   const uint8_t address[4],
+                                   int prefixLen,
+                                   struct Log* logger,
+                                   struct Except* eh)
+{
+    Except_raise(eh, TUNConfigurator_addIp4Address_INTERNAL, "unimplemented");
+}
+
+void TUNConfigurator_addIp6Address(const char* interfaceName,
+                                   const uint8_t address[16],
+                                   int prefixLen,
+                                   struct Log* logger,
+                                   struct Except* eh)
+{
+}
+
+void TUNConfigurator_setMTU(const char* interfaceName,
+                            uint32_t mtu,
+                            struct Log* logger,
+                            struct Except* eh)
+{
 }

@@ -16,11 +16,11 @@
 #define CryptoAuth_benchmark_H
 
 #include "memory/Allocator.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
 
-#include <event2/event.h>
+#include "util/events/EventBase.h"
 
-void CryptoAuth_benchmark(struct event_base* base,
+void CryptoAuth_benchmark(struct EventBase* base,
                           struct Log* logger,
                           struct Allocator* alloc);
 

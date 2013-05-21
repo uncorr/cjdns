@@ -15,11 +15,12 @@
 #include "interface/Interface.h"
 #include "interface/TUNConfigurator.h"
 #include "util/AddrTools.h"
+#include "util/Errno.h"
 
 #include <stdio.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#include <errno.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <stdlib.h>
@@ -84,25 +85,35 @@ static void setupRoute(const uint8_t address[16],
 
     int sock = socket(PF_ROUTE, SOCK_RAW, 0);
     if (sock == -1) {
-        Except_raise(eh, TUNConfigurator_setIpAddress_INTERNAL,
-                     "open route socket [%s]", strerror(errno));
+        Except_raise(eh, TUNConfigurator_addIp6Address_INTERNAL,
+                     "open route socket [%s]", Errno_getString());
     }
 
     ssize_t returnLen = write(sock, (char*) &rm, rm.header.rtm_msglen);
     if (returnLen < 0) {
-        Except_raise(eh, TUNConfigurator_setIpAddress_INTERNAL,
-                     "insert route [%s]", strerror(errno));
+        Except_raise(eh, TUNConfigurator_addIp6Address_INTERNAL,
+                     "insert route [%s]", Errno_getString());
     } else if (returnLen < rm.header.rtm_msglen) {
-        Except_raise(eh, TUNConfigurator_setIpAddress_INTERNAL,
+        Except_raise(eh, TUNConfigurator_addIp6Address_INTERNAL,
                      "insert route returned only [%d] of [%d]", returnLen, rm.header.rtm_msglen);
     }
 }
 
-void TUNConfigurator_setIpAddress(const char* interfaceName,
-                                  const uint8_t address[16],
-                                  int prefixLen,
-                                  struct Log* logger,
-                                  struct Except* eh)
+void TUNConfigurator_addIp4Address(const char* interfaceName,
+                                   const uint8_t address[4],
+                                   int prefixLen,
+                                   struct Log* logger,
+                                   struct Except* eh)
+{
+    // TODO: implement this and then remove the exception from TUNInterface_ipv4_root_test.c
+    Except_raise(eh, TUNConfigurator_addIp4Address_INTERNAL, "unimplemented");
+}
+
+void TUNConfigurator_addIp6Address(const char* interfaceName,
+                                   const uint8_t address[16],
+                                   int prefixLen,
+                                   struct Log* logger,
+                                   struct Except* eh)
 {
     struct lifreq ifr = {
         .lifr_ppa = 0,
@@ -144,9 +155,10 @@ void TUNConfigurator_setIpAddress(const char* interfaceName,
     }
 
     if (error) {
-        int err = errno;
+        enum Errno err = Errno_get();
         close(udpSock);
-        Except_raise(eh, TUNConfigurator_setIpAddress_INTERNAL, "%s [%s]", error, strerror(err));
+        Except_raise(eh, TUNConfigurator_addIp6Address_INTERNAL, "%s [%s]",
+                     error, Errno_strerror(err));
     }
     close(udpSock);
 
@@ -183,7 +195,7 @@ void* TUNConfigurator_initTun(const char* interfaceName,
     int tunFd2 = open("/dev/tun", O_RDWR, 0);
 
     if (tunFd < 0 || ipFd < 0 || ppa < 0 || tunFd2 < 0) {
-        int err = errno;
+        enum Errno err = Errno_get();
         close(tunFd);
         close(ipFd);
         close(tunFd2);
@@ -198,7 +210,7 @@ void* TUNConfigurator_initTun(const char* interfaceName,
         } else if (tunFd2 < 0) {
             error = "open(\"/dev/tun\") (opening for plumbing interface)";
         }
-        Except_raise(eh, TUNConfigurator_initTun_INTERNAL, error, strerror(err));
+        Except_raise(eh, TUNConfigurator_initTun_INTERNAL, error, Errno_strerror(err));
     }
 
     struct lifreq ifr = {
@@ -232,11 +244,11 @@ void* TUNConfigurator_initTun(const char* interfaceName,
     }
 
     if (error) {
-        int err = errno;
+        enum Errno err = Errno_get();
         close(ipFd);
         close(tunFd2);
         close(tunFd);
-        Except_raise(eh, TUNConfigurator_initTun_INTERNAL, "%s [%s]", error, strerror(err));
+        Except_raise(eh, TUNConfigurator_initTun_INTERNAL, "%s [%s]", error, Errno_strerror(err));
     }
 
     close(ipFd);

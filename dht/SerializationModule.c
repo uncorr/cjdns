@@ -25,13 +25,15 @@
 #include "benc/serialization/BencSerializer.h"
 #include "benc/serialization/standard/StandardBencSerializer.h"
 #include "util/Bits.h"
+#include "util/log/Log.h"
 
-#include <string.h>
+#include "util/platform/libc/string.h"
 
 #define SERIALIZER StandardBencSerializer_get()
 
 struct SerializationModule_context {
     struct DHTModule module;
+    struct Log* logger;
 };
 
 /*--------------------Prototypes--------------------*/
@@ -43,17 +45,19 @@ static int handleIncoming(struct DHTMessage* message,
 /*--------------------Interface--------------------*/
 
 void SerializationModule_register(struct DHTModuleRegistry* registry,
-                                  const struct Allocator* allocator)
+                                  struct Log* logger,
+                                  struct Allocator* allocator)
 {
     struct SerializationModule_context* context =
-        allocator->malloc(sizeof(struct SerializationModule_context), allocator);
+        Allocator_malloc(allocator, sizeof(struct SerializationModule_context));
     Bits_memcpyConst(context, (&(struct SerializationModule_context) {
         .module = {
             .name = "SerializationModule",
             .context = context,
             .handleIncoming = handleIncoming,
             .handleOutgoing = handleOutgoing
-        }
+        },
+        .logger = logger
     }), sizeof(struct SerializationModule_context));
 
     DHTModuleRegistry_register(&(context->module), registry);
@@ -86,12 +90,17 @@ static int handleOutgoing(struct DHTMessage* message,
 static int handleIncoming(struct DHTMessage* message,
                           void* vcontext)
 {
-    message->asDict = message->allocator->malloc(sizeof(Dict), message->allocator);
+    message->asDict = Allocator_malloc(message->allocator, sizeof(Dict));
 
     struct Reader* reader =
         ArrayReader_new(message->bytes, DHTMessage_MAX_SIZE, message->allocator);
 
-    if (SERIALIZER->parseDictionary(reader, message->allocator, message->asDict) != 0) {
+    int ret = SERIALIZER->parseDictionary(reader, message->allocator, message->asDict);
+    if (ret != 0) {
+        #ifdef Log_INFO
+            struct SerializationModule_context* context = vcontext;
+            Log_info(context->logger, "Failed to parse message [%d]", ret);
+        #endif
         return -2;
     }
 

@@ -15,11 +15,17 @@
 #ifndef Security_H
 #define Security_H
 
-#include "exception/ExceptionHandler.h"
-#include "util/Log.h"
+#include "exception/Except.h"
+#include "util/log/Log.h"
 
-void Security_setUser(char* userName, struct Log* logger, struct ExceptionHandler* eh);
+#define Security_setUser_NO_SUCH_USER -1
+#define Security_setUser_PERMISSION -2
+#define Security_setUser_INTERNAL -3
 
-void Security_noFiles(struct ExceptionHandler* eh);
+void Security_setUser(char* userName, struct Log* logger, struct Except* eh);
+
+void Security_noFiles(struct Except* eh);
+
+void Security_maxMemory(uint32_t maxMemory, struct Except* eh);
 
 #endif

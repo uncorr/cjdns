@@ -15,22 +15,23 @@
 #ifndef RouterModule_H
 #define RouterModule_H
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <event2/event.h>
-
 #include "admin/Admin.h"
+#include "crypto/random/Random.h"
 #include "dht/Address.h"
 #include "dht/DHTModuleRegistry.h"
 #include "dht/dhtcore/Node.h"
 #include "benc/Object.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
+#include "util/events/EventBase.h"
+
+#include <stdint.h>
+#include <stdbool.h>
 
 /**
  * The router module is the functional part of the DHT engine.
  * It's job is to maintain a routing table which is updated by all incoming packets.
- * When it gets an incoming find_node or get_* requrest, it's job is to add nodes to the reply
- * so that the asking node can find other nodes which are closer to it's target than us.
+ * When it gets an incoming find_node or get_* requrest, its job is to add nodes to the reply
+ * so that the asking node can find other nodes which are closer to its target than us.
  */
 struct RouterModule;
 
@@ -40,7 +41,7 @@ struct RouterModule_Search;
 #define RouterModule_K 8
 
 /** Maximum number of pings which can be in flight at once. */
-#define RouterModule_MAX_CONCURRENT_PINGS 64
+#define RouterModule_MAX_CONCURRENT_PINGS 128
 
 /**
  * Register a new RouterModule.
@@ -51,13 +52,15 @@ struct RouterModule_Search;
  * @param eventBase the libevent base.
  * @param logger the means of writing logs.
  * @param admin tool for administrating a running router.
+ * @param rand a source of random numbers
  */
 struct RouterModule* RouterModule_register(struct DHTModuleRegistry* registry,
                                            struct Allocator* allocator,
                                            const uint8_t myAddress[Address_KEY_SIZE],
-                                           struct event_base* eventBase,
+                                           struct EventBase* eventBase,
                                            struct Log* logger,
-                                           struct Admin* admin);
+                                           struct Admin* admin,
+                                           struct Random* rand);
 
 /**
  * Start a search.
@@ -69,32 +72,28 @@ struct RouterModule* RouterModule_register(struct DHTModuleRegistry* registry,
  *                 if it returns true then the search is assumed to be complete.
  * @param callbackContext a pointer which will be passed back to the callback when it is called.
  * @param module the router module which should perform the search.
+ * @param searchAllocator a temporary allocator to use for allocating the search data.
+ *                        freeing this allocator will cancel the search.
  * @return a search if all goes well, NULL if the search could not be completed because there are
  *         no nodes closer to the destination than us or if there is not enough empty search slots.
  */
-struct RouterModule_Search*
-    RouterModule_beginSearch(const uint8_t target[Address_SEARCH_TARGET_SIZE],
-                             bool (* const callback)(void* callbackContext,
-                                                     struct DHTMessage* result),
-                             void* callbackContext,
-                             struct RouterModule* module);
-
-/**
- * Cancel a search before it is complete.
- *
- * @param toCancel the result of calling RouterModule_beginSearch() for this search.
- */
-void RouterModule_cancelSearch(struct RouterModule_Search* toCancel);
+struct RouterModule_Search* RouterModule_beginSearch(
+    uint8_t searchTarget[16],
+    bool (* const callback)(void* callbackContext, struct DHTMessage* result),
+    void* callbackContext,
+    struct RouterModule* module,
+    struct Allocator* searchAllocator);
 
 /**
  * Manually add a node to the routing table.
  * This injects a node directly into the routing table, it's much safer to ping the node and let the
  * routing engine pick up the ping response and insert the node then.
  *
- * @param address the address of the node.
  * @param module the router module to add the node to.
+ * @param address the address of the node.
+ * @param version the protocol version of the node which we are adding.
  */
-void RouterModule_addNode(struct Address* address, struct RouterModule* module);
+void RouterModule_addNode(struct RouterModule* module, struct Address* address, uint32_t version);
 
 /**
  * Send a ping to a node, when it responds it will be added to the routing table.
@@ -122,11 +121,5 @@ struct Node* RouterModule_getNode(uint64_t path, struct RouterModule* module);
 
 struct Node* RouterModule_lookup(uint8_t targetAddr[Address_SEARCH_TARGET_SIZE],
                                  struct RouterModule* module);
-
-/**
- * return git commit id as hex (null terminated string with 40 chars)
- */
-const char* RouterModule_gitVersion();
-
 
 #endif

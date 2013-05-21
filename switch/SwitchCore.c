@@ -14,11 +14,11 @@
  */
 #include "memory/Allocator.h"
 #include "interface/Interface.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
 #include "switch/SwitchCore.h"
 #include "switch/NumberCompress.h"
 #include "util/Bits.h"
-#include "util/checksum/Checksum.h"
+#include "util/Checksum.h"
 #include "util/Endian.h"
 #include "wire/Control.h"
 #include "wire/Error.h"
@@ -70,7 +70,7 @@ struct SwitchCore
 
 struct SwitchCore* SwitchCore_new(struct Log* logger, struct Allocator* allocator)
 {
-    struct SwitchCore* core = allocator->calloc(sizeof(struct SwitchCore), 1, allocator);
+    struct SwitchCore* core = Allocator_calloc(allocator, sizeof(struct SwitchCore), 1);
     core->allocator = allocator;
     core->interfaceCount = 0;
     core->logger = logger;
@@ -81,9 +81,12 @@ static inline uint16_t sendMessage(const struct SwitchInterface* switchIf,
                                    struct Message* toSend,
                                    struct Log* logger)
 {
-    uint16_t priority = Headers_getPriority((struct Headers_SwitchHeader*) toSend->bytes);
+    struct Headers_SwitchHeader* switchHeader = (struct Headers_SwitchHeader*) toSend->bytes;
+
+    uint32_t priority = Headers_getPriority(switchHeader);
     if (switchIf->buffer + priority > switchIf->bufferMax) {
-        return Error_LINK_LIMIT_EXCEEDED;
+        uint32_t messageType = Headers_getMessageType(switchHeader);
+        Headers_setPriorityAndMessageType(switchHeader, 0, messageType);
     }
 
     uint16_t err = switchIf->iface->sendMessage(toSend, switchIf->iface);
@@ -149,7 +152,7 @@ static uint8_t receiveMessage(struct Message* message, struct Interface* iface)
         return Error_NONE;
     }
 
-    if (message->length < sizeof(struct Headers_SwitchHeader)) {
+    if (message->length < Headers_SwitchHeader_SIZE) {
         Log_debug(sourceIf->core->logger, "Dropped runt packet.");
         return Error_NONE;
     }
@@ -180,7 +183,7 @@ static uint8_t receiveMessage(struct Message* message, struct Interface* iface)
     if (sourceBits > bits) {
         if (destIndex == 1) {
             // If the destination index is this router, don't drop the packet since there no
-            // way for a node to know the size of the representation of it's source label.
+            // way for a node to know the size of the representation of its source label.
             // - label ends in 0001; if there are enough zeroes at the end after removing the 1,
             //   we can still fit in the source discriminator
             // - the return path probably doesn't start with 3 zeroes, but it will still be working,
@@ -259,7 +262,7 @@ static uint8_t receiveMessage(struct Message* message, struct Interface* iface)
 static void removeInterface(void* vcontext)
 {
     struct SwitchInterface* si = (struct SwitchInterface*) vcontext;
-    memset(si, 0, sizeof(struct SwitchInterface));
+    Bits_memset(si, 0, sizeof(struct SwitchInterface));
 }
 
 void SwitchCore_swapInterfaces(struct Interface* if1, struct Interface* if2)
@@ -312,7 +315,7 @@ int SwitchCore_addInterface(struct Interface* iface,
     }
 
     if (ifIndex == NumberCompress_INTERFACES) {
-        return -1;
+        return SwitchCore_addInterface_OUT_OF_SPACE;
     }
 
     struct SwitchInterface* newIf = &core->interfaces[ifIndex];

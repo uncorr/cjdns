@@ -16,17 +16,17 @@
 #include "interface/Interface.h"
 #include "interface/TUNConfigurator.h"
 #include "util/AddrTools.h"
+#include "util/Errno.h"
 
 #include <stdio.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#include <errno.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <net/if.h>
-
+#include <string.h>
 #include <netdb.h>
 #include <net/if_var.h>
 #include <netinet/in_var.h>
@@ -35,7 +35,6 @@
 #include <sys/kern_control.h>
 #include <sys/sys_domain.h>
 #include <sys/kern_event.h>
-#include <sys/errno.h>
 
 #define APPLE_UTUN_CONTROL "com.apple.net.utun_control"
 #define UTUN_OPT_IFNAME 2
@@ -80,7 +79,7 @@ void* TUNConfigurator_initTun(const char* interfaceName,
     if (tunFileDescriptor < 0) {
         Except_raise(eh, TUNConfigurator_initTun_INTERNAL,
                      "socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL) [%s]",
-                     strerror(errno));
+                     Errno_getString());
     }
 
     /* get the utun control id */
@@ -89,12 +88,12 @@ void* TUNConfigurator_initTun(const char* interfaceName,
     strncpy(info.ctl_name, APPLE_UTUN_CONTROL, strlen(APPLE_UTUN_CONTROL));
 
     if (ioctl(tunFileDescriptor, CTLIOCGINFO, &info) < 0) {
-        int err = errno;
+        enum Errno err = Errno_get();
         close(tunFileDescriptor);
         Except_raise(eh,
                      TUNConfigurator_initTun_INTERNAL,
                      "getting utun device id [%s]",
-                     strerror(err));
+                     Errno_strerror(err));
     }
 
     /* connect the utun device */
@@ -107,12 +106,12 @@ void* TUNConfigurator_initTun(const char* interfaceName,
     addr.sc_unit = tunUnit;
 
     if (connect(tunFileDescriptor, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        int err = errno;
+        enum Errno err = Errno_get();
         close(tunFileDescriptor);
         Except_raise(eh,
                      TUNConfigurator_initTun_INTERNAL,
                      "connecting to utun device [%s]",
-                     strerror(err));
+                     Errno_strerror(err));
     }
 
     /* retrieve the assigned utun interface name */
@@ -120,23 +119,32 @@ void* TUNConfigurator_initTun(const char* interfaceName,
                    assignedInterfaceName, (uint32_t*) &maxNameSize) >= 0) {
         Log_info(logger, "Initialized utun interface [%s]\n", assignedInterfaceName);
     } else {
-        int err = errno;
+        enum Errno err = Errno_get();
         close(tunFileDescriptor);
         Except_raise(eh,
                      TUNConfigurator_initTun_INTERNAL,
                      "getting utun interface name [%s]",
-                     strerror(err));
+                     Errno_strerror(err));
     }
 
     uintptr_t tunPtr = (uintptr_t) tunFileDescriptor;
     return (void*) tunPtr;
 }
 
-void TUNConfigurator_setIpAddress(const char* interfaceName,
-                                  const uint8_t address[16],
-                                  int prefixLen,
-                                  struct Log* logger,
-                                  struct Except* eh)
+void TUNConfigurator_addIp4Address(const char* interfaceName,
+                                   const uint8_t address[4],
+                                   int prefixLen,
+                                   struct Log* logger,
+                                   struct Except* eh)
+{
+    Except_raise(eh, TUNConfigurator_addIp4Address_INTERNAL, "unimplemented");
+}
+
+void TUNConfigurator_addIp6Address(const char* interfaceName,
+                                   const uint8_t address[16],
+                                   int prefixLen,
+                                   struct Log* logger,
+                                   struct Except* eh)
 {
     /* stringify our IP address */
     char myIp[40];
@@ -157,7 +165,7 @@ void TUNConfigurator_setIpAddress(const char* interfaceName,
     if (err) {
         // Should never happen since the address is specified as binary.
         Except_raise(eh,
-                     TUNConfigurator_setIpAddress_INTERNAL,
+                     TUNConfigurator_addIp6Address_INTERNAL,
                      "bad IPv6 address [%s]",
                      gai_strerror(err));
     }
@@ -166,18 +174,14 @@ void TUNConfigurator_setIpAddress(const char* interfaceName,
 
     /* turn the prefixlen into a mask, and add it to the request */
     struct sockaddr_in6* mask = &in6_addreq.ifra_prefixmask;
-    u_char *cp;
 
-    int len = prefixLen;
     mask->sin6_len = sizeof(*mask);
-    if ((prefixLen == 0) || (prefixLen == 128)) {
+    if (prefixLen >= 128 || prefixLen <= 0) {
         memset(&mask->sin6_addr, 0xff, sizeof(struct in6_addr));
     } else {
         memset((void *)&mask->sin6_addr, 0x00, sizeof(mask->sin6_addr));
-        for (cp = (u_char *)&mask->sin6_addr; len > 7; len -= 8) {
-            *cp++ = 0xff;
-        }
-        *cp = 0xff << (8 - len);
+        memset((void *)&mask->sin6_addr, 0xff, prefixLen>>3);
+        ((uint8_t*)&mask->sin6_addr)[prefixLen>>3] = 0xff << (8 - (prefixLen%8));
     }
 
     strncpy(in6_addreq.ifra_name, interfaceName, sizeof(in6_addreq.ifra_name));
@@ -186,18 +190,18 @@ void TUNConfigurator_setIpAddress(const char* interfaceName,
     int s = socket(AF_INET6, SOCK_DGRAM, 0);
     if (s < 0) {
         Except_raise(eh,
-                     TUNConfigurator_setIpAddress_INTERNAL,
+                     TUNConfigurator_addIp6Address_INTERNAL,
                      "socket() failed [%s]",
-                     strerror(errno));
+                     Errno_getString());
     }
 
     if (ioctl(s, SIOCAIFADDR_IN6, &in6_addreq) < 0) {
-        int err = errno;
+        enum Errno err = Errno_get();
         close(s);
         Except_raise(eh,
-                     TUNConfigurator_setIpAddress_INTERNAL,
+                     TUNConfigurator_addIp6Address_INTERNAL,
                      "ioctl(SIOCAIFADDR) failed [%s]",
-                     strerror(err));
+                     Errno_strerror(err));
     }
 
     Log_info(logger, "Configured IPv6 [%s/%i] for [%s]", myIp, prefixLen, interfaceName);
@@ -216,7 +220,7 @@ void TUNConfigurator_setMTU(const char* interfaceName,
         Except_raise(eh,
                      TUNConfigurator_ERROR_GETTING_ADMIN_SOCKET,
                      "socket() failed [%s]",
-                     strerror(errno));
+                     Errno_getString());
     }
 
 
@@ -228,11 +232,11 @@ void TUNConfigurator_setMTU(const char* interfaceName,
     Log_info(logger, "Setting MTU for device [%s] to [%u] bytes.", interfaceName, mtu);
 
     if (ioctl(s, SIOCSIFMTU, &ifRequest) < 0) {
-       int err = errno;
+       enum Errno err = Errno_get();
        close(s);
        Except_raise(eh,
                     TUNConfigurator_setMTU_INTERNAL,
                     "ioctl(SIOCSIFMTU) failed [%s]",
-                    strerror(err));
+                    Errno_strerror(err));
     }
 }

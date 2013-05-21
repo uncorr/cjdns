@@ -16,7 +16,8 @@
 #include "benc/String.h"
 #include "util/Bits.h"
 
-#include <string.h>
+#define string_strlen
+#include "util/platform/libc/string.h"
 #include <stdio.h>
 #include <stdarg.h>
 
@@ -29,30 +30,37 @@ String* String_new(const char* bytes, const struct Allocator* allocator)
 /** @see Object.h */
 String* String_newBinary(const char* bytes, size_t length, const struct Allocator* allocator)
 {
-    char* copy = allocator->malloc(length + 1, allocator);
+    char* copy = Allocator_malloc(allocator, length + 1);
     // Make the string null terminated so it will print nicely.
     copy[length] = '\0';
     if (bytes != NULL) {
         Bits_memcpy(copy, bytes, length);
     } else {
-        memset(copy, '\0', length);
+        Bits_memset(copy, '\0', length);
     }
-    String* string = allocator->malloc(sizeof(String), allocator);
+    String* string = Allocator_malloc(allocator, sizeof(String));
     string->len = length;
     string->bytes = copy;
     return string;
 }
 
-String* String_printf(const struct Allocator* allocator, const char* format, ...)
+String* String_vprintf(const struct Allocator* allocator, const char* format, va_list args)
 {
     #define String_BUFFER_SZ 1024
     char buff[String_BUFFER_SZ];
-    va_list args;
-    va_start(args, format);
     vsnprintf(buff, String_BUFFER_SZ, format, args);
     size_t length = strlen(buff);
     return String_newBinary(buff, length, allocator);
     #undef String_BUFFER_SZ
+}
+
+String* String_printf(const struct Allocator* allocator, const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    String* out = String_vprintf(allocator, format, args);
+    va_end(args);
+    return out;
 }
 
 int String_compare(const String* a, const String* b)
@@ -77,5 +85,5 @@ bool String_equals(const String* a, const String* b)
     if (a == NULL || b == NULL) {
         return a == NULL && b == NULL;
     }
-    return a->len == b->len && (memcmp(a->bytes, b->bytes, a->len) == 0);
+    return a->len == b->len && (Bits_memcmp(a->bytes, b->bytes, a->len) == 0);
 }

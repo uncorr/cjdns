@@ -15,14 +15,17 @@
 #ifndef UDPInterface_H
 #define UDPInterface_H
 
-#include <event2/event.h>
-
 #include "interface/Interface.h"
-#include "net/InterfaceController.h"
-#include "util/Log.h"
+#include "interface/InterfaceController.h"
 #include "memory/Allocator.h"
+#include "util/events/EventBase.h"
+#include "util/platform/Sockaddr.h"
+#include "util/log/Log.h"
 
-struct UDPInterface;
+struct UDPInterface
+{
+    struct Sockaddr* addr;
+};
 
 /**
  * @param base the LibEvent context.
@@ -47,10 +50,10 @@ struct UDPInterface;
 #define UDPInterface_new_SOCKET_FAILED -3
 #define UDPInterface_new_PROTOCOL_NOT_SUPPORTED -4
 #define UDPInterface_new_BIND_FAILED -5
-struct UDPInterface* UDPInterface_new(struct event_base* base,
-                                      const char* bindAddr,
+struct UDPInterface* UDPInterface_new(struct EventBase* base,
+                                      struct Sockaddr* bindAddr,
                                       struct Allocator* allocator,
-                                      struct ExceptionHandler* exHandler,
+                                      struct Except* exHandler,
                                       struct Log* logger,
                                       struct InterfaceController* ic);
 

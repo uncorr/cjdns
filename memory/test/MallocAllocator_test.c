@@ -13,15 +13,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "util/Assert.h"
-#include <string.h>
+#include "util/platform/libc/string.h"
 #include <stdint.h>
 #include <stdio.h>
 
 #include "memory/Allocator.h"
-#include "memory/MallocAllocator.c"
+#include "memory/MallocAllocator_pvt.h"
 
-#define ALLOCATION_SIZE sizeof(struct Allocation)
-#define ALLOCATOR_SIZE sizeof(struct FirstContext)
+#define ALLOCATION_SIZE sizeof(struct MallocAllocator_Allocation)
+#define ALLOCATOR_SIZE sizeof(struct MallocAllocator_FirstCtx)
 
 int main()
 {
@@ -29,19 +29,19 @@ int main()
     size_t bytesUsed;
 
     Assert_always((bytesUsed = MallocAllocator_bytesAllocated(alloc)) == 0);
-    alloc->malloc(25, alloc);
+    Allocator_malloc(alloc, 25);
     bytesUsed += 25 + ALLOCATION_SIZE;
     Assert_always(MallocAllocator_bytesAllocated(alloc) == bytesUsed);
 
-    struct Allocator* child = alloc->child(alloc);
+    struct Allocator* child = Allocator_child(alloc);
     bytesUsed += ALLOCATION_SIZE + ALLOCATOR_SIZE;
     Assert_always(MallocAllocator_bytesAllocated(alloc) == bytesUsed);
 
-    child->malloc(30, child);
+    Allocator_malloc(child, 30);
     bytesUsed += 30 + ALLOCATION_SIZE;
     Assert_always(MallocAllocator_bytesAllocated(alloc) == bytesUsed);
 
-    child->free(child);
+    Allocator_free(child);
     bytesUsed -= 30 + ALLOCATION_SIZE;
     bytesUsed -= ALLOCATION_SIZE + ALLOCATOR_SIZE;
     Assert_always(MallocAllocator_bytesAllocated(alloc) == bytesUsed);

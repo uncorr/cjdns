@@ -17,15 +17,14 @@
 #include "exception/Jmp.h"
 #include "interface/UDPInterface.h"
 #include "memory/Allocator.h"
-#include "net/InterfaceController.h"
-#include "util/Base32.h"
-
-#include <errno.h>
-#include <event2/event.h>
+#include "interface/InterfaceController.h"
+#include "util/events/EventBase.h"
+#include "util/Errno.h"
+#include "crypto/Key.h"
 
 struct Context
 {
-    struct event_base* eventBase;
+    struct EventBase* eventBase;
     struct Allocator* allocator;
     struct Log* logger;
     struct Admin* admin;
@@ -47,21 +46,15 @@ static void beginConnection(Dict* args, void* vcontext, String* txid)
     String* error = NULL;
 
     uint8_t pkBytes[32];
-
+    int ret;
     if (ctx->ifCount == 0) {
         error = String_CONST("no interfaces are setup, call UDPInterface_new() first");
 
     } else if (interfaceNumber && (*interfaceNumber >= ctx->ifCount || *interfaceNumber < 0)) {
         error = String_CONST("invalid interfaceNumber");
 
-    } else if (!publicKey
-        || publicKey->len < 52
-        || (publicKey->len > 52 && publicKey->bytes[52] != '.'))
-    {
-        error = String_CONST("publicKey must be 52 characters long.");
-
-    } else if (Base32_decode(pkBytes, 32, (uint8_t*)publicKey->bytes, 52) != 32) {
-        error = String_CONST("failed to parse publicKey.");
+    } else if ((ret = Key_parse(publicKey, pkBytes, NULL))) {
+        error = String_CONST(Key_parse_strerror(ret));
 
     } else {
         struct UDPInterface* udpif = ctx->ifaces[ifNum];
@@ -90,18 +83,15 @@ static void beginConnection(Dict* args, void* vcontext, String* txid)
     Admin_sendMessage(&out, txid, ctx->admin);
 }
 
-static void newInterface(Dict* args, void* vcontext, String* txid)
+static void newInterface2(struct Context* ctx,
+                          struct Sockaddr* addr,
+                          String* txid)
 {
-    struct Context* const ctx = vcontext;
-    String* const bindAddress = Dict_getString(args, String_CONST("bindAddress"));
-    struct Allocator* const alloc = ctx->allocator->child(ctx->allocator);
-
+    struct Allocator* const alloc = Allocator_child(ctx->allocator);
     struct UDPInterface* udpIf = NULL;
     struct Jmp jmp;
     Jmp_try(jmp) {
-        char* const bindBytes = (bindAddress) ? bindAddress->bytes : NULL;
-        udpIf = UDPInterface_new(
-            ctx->eventBase, bindBytes, alloc, &jmp.handler, ctx->logger, ctx->ic);
+        udpIf = UDPInterface_new(ctx->eventBase, addr, alloc, &jmp.handler, ctx->logger, ctx->ic);
     } Jmp_catch {
         String* errStr = String_CONST(jmp.message);
         Dict out = Dict_CONST(String_CONST("error"), String_OBJ(errStr), NULL);
@@ -109,21 +99,20 @@ static void newInterface(Dict* args, void* vcontext, String* txid)
         if (jmp.code == UDPInterface_new_SOCKET_FAILED
             || jmp.code == UDPInterface_new_BIND_FAILED)
         {
-            char* err = strerror(EVUTIL_SOCKET_ERROR());
+            char* err = Errno_getString();
             Dict out2 = Dict_CONST(String_CONST("cause"), String_OBJ(String_CONST(err)), out);
             Admin_sendMessage(&out2, txid, ctx->admin);
         } else {
             Admin_sendMessage(&out, txid, ctx->admin);
         }
 
-        alloc->free(alloc);
-        return;
+        Allocator_free(alloc);
     }
 
     // sizeof(struct UDPInterface*) the size of a pointer.
-    ctx->ifaces = ctx->allocator->realloc(ctx->ifaces,
-                                          sizeof(struct UDPInterface*) * (ctx->ifCount + 1),
-                                          ctx->allocator);
+    ctx->ifaces = Allocator_realloc(ctx->allocator,
+                                    ctx->ifaces,
+                                    sizeof(struct UDPInterface*) * (ctx->ifCount + 1));
     ctx->ifaces[ctx->ifCount] = udpIf;
 
     Dict out = Dict_CONST(
@@ -135,20 +124,34 @@ static void newInterface(Dict* args, void* vcontext, String* txid)
     ctx->ifCount++;
 }
 
-void UDPInterface_admin_register(struct event_base* base,
+static void newInterface(Dict* args, void* vcontext, String* txid)
+{
+    struct Context* ctx = vcontext;
+    String* bindAddress = Dict_getString(args, String_CONST("bindAddress"));
+    struct Sockaddr_storage addr;
+    if (Sockaddr_parse((bindAddress) ? bindAddress->bytes : "0.0.0.0", &addr)) {
+        Dict out = Dict_CONST(
+            String_CONST("error"), String_OBJ(String_CONST("Failed to parse address")), NULL
+        );
+        Admin_sendMessage(&out, txid, ctx->admin);
+        return;
+    }
+    newInterface2(ctx, &addr.addr, txid);
+}
+
+void UDPInterface_admin_register(struct EventBase* base,
                                  struct Allocator* allocator,
                                  struct Log* logger,
                                  struct Admin* admin,
                                  struct InterfaceController* ic)
 {
-    struct Context* ctx = allocator->clone(
-        sizeof(struct Context), allocator, &(struct Context) {
-            .eventBase = base,
-            .allocator = allocator,
-            .logger = logger,
-            .admin = admin,
-            .ic = ic
-        });
+    struct Context* ctx = Allocator_clone(allocator, (&(struct Context) {
+        .eventBase = base,
+        .allocator = allocator,
+        .logger = logger,
+        .admin = admin,
+        .ic = ic
+    }));
 
     struct Admin_FunctionArg adma[1] = {
         { .name = "bindAddress", .required = 0, .type = "String" }

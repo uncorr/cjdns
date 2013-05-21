@@ -21,14 +21,16 @@
 #include "memory/Allocator.h"
 #include "switch/SwitchCore.h"
 #include "net/SwitchPinger.h"
-#include "net/InterfaceController.h"
-#include "util/Log.h"
+#include "interface/InterfaceController.h"
+#include "util/log/Log.h"
+
 
 struct InterfaceController* DefaultInterfaceController_new(struct CryptoAuth* ca,
                                                            struct SwitchCore* switchCore,
                                                            struct RouterModule* routerModule,
                                                            struct Log* logger,
-                                                           struct event_base* eventBase,
+                                                           struct EventBase* eventBase,
                                                            struct SwitchPinger* switchPinger,
+                                                           struct Random* rand,
                                                            struct Allocator* allocator);
 #endif

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # You may redistribute this program and/or modify it under the terms of
 # the GNU General Public License as published by the Free Software Foundation,
 # either version 3 of the License, or (at your option) any later version.
@@ -40,12 +40,17 @@ if [ -f cmake-build/bin/cmake ]; then
     CMAKE=`pwd`/cmake-build/bin/cmake
 fi
 
-[ ${CMAKE} ] && ${CMAKE} --version | grep 2.8.[2-9] ||
+[ ${CMAKE} ] && ${CMAKE} --version | grep '2.8.\([2-9]\|1[0-9]\)' ||
 while true; do
     [ -d cmake-build ] && rm -r cmake-build
     mkdir cmake-build
     cd cmake-build
-    wget ${CMAKE_DOWNLOAD}
+
+    APP=`which wget || which curl || echo 'none'`
+    [[ "$APP" == 'none' ]] && echo 'Need wget curl' && exit -1;
+    [[ "$APP" == `which wget` ]] && $APP ${CMAKE_DOWNLOAD}
+    [[ "$APP" == `which curl` ]] && $APP ${CMAKE_DOWNLOAD} > cmake.tar.gz
+
     ${SHA256SUM} ./*.tar.gz | grep ${CMAKE_SHA256} || exit -1
     tar -xf *.tar.gz
     find ./ -mindepth 1 -maxdepth 1 -type d -exec mv {} build \;
@@ -55,10 +60,13 @@ while true; do
     break
 done
 
-[ -f cjdroute ] && mv cjdroute cjdroute.bak
-
-${CMAKE} .. && make &&
-    make test || rm cjdroute &&
-    [ -f cjdroute ] &&
-    cp cjdroute ../cjdroute &&
-    echo "\033[1;32mBuild completed successfully, type ./cjdroute to begin setup.\033[0m"
+(
+    ${CMAKE} .. && make || exit 1;
+    make test || [[ "${FORCE}" != "" ]] || exit 1;
+    [ -f admin/angel/cjdroute2 ] && [ -f admin/angel/cjdns ] || exit 1;
+    [ ! -f ../cjdroute ] || rm ../cjdroute || exit 1;
+    [ ! -f ../cjdns ] || rm ../cjdns || exit 1;
+    cp admin/angel/cjdroute2 ../cjdroute || exit 1;
+    cp admin/angel/cjdns ../ || exit 1;
+    echo -e "\033[1;32mBuild completed successfully, type ./cjdroute to begin setup.\033[0m"
+) || echo -e "\033[1;31mFailed to build cjdns.\033[0m"

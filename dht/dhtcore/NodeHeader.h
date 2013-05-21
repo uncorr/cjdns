@@ -21,7 +21,6 @@
 
 /**
  * Information about a given node.
- * Takes 8 bytes, 512 headers per 4096 byte page of memory.
  */
 struct NodeHeader
 {
@@ -36,7 +35,9 @@ struct NodeHeader
 
     /** The number interface of the next hop to get to this node. */
     uint32_t switchIndex;
+
+    /** The protocol version of the node. */
+    uint32_t version;
 };
-Assert_compileTime(sizeof(struct NodeHeader) == 12);
 
 #endif

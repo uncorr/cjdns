@@ -36,6 +36,7 @@
 #define Headers_SwitchHeader_TYPE_DATA 0
 #define Headers_SwitchHeader_TYPE_CONTROL 1
 
+#pragma pack(push)
 #pragma pack(4)
 struct Headers_SwitchHeader
 {
@@ -55,16 +56,17 @@ struct Headers_SwitchHeader
 };
 #define Headers_SwitchHeader_SIZE 12
 Assert_compileTime(sizeof(struct Headers_SwitchHeader) == Headers_SwitchHeader_SIZE);
+#pragma pack(pop)
 
 
 static inline uint32_t Headers_getMessageType(const struct Headers_SwitchHeader* header)
 {
-    return ntohl(header->lowBits_be) >> 24;
+    return Endian_bigEndianToHost32(header->lowBits_be) >> 24;
 }
 
 static inline uint32_t Headers_getPriority(const struct Headers_SwitchHeader* header)
 {
-    return ntohl(header->lowBits_be) & ((1 << 24) - 1);
+    return Endian_bigEndianToHost32(header->lowBits_be) & ((1 << 24) - 1);
 }
 
 static inline void Headers_setPriorityAndMessageType(struct Headers_SwitchHeader* header,
@@ -128,12 +130,15 @@ static inline bool Headers_isPacketAuthRequired(union Headers_AuthChallenge* ac)
 }
 
 static inline void Headers_setPacketAuthRequired(union Headers_AuthChallenge* ac,
-                                                bool require)
+                                                 bool require)
 {
-    ac->challenge.requirePacketAuthAndDerivationCount &=
-        Endian_hostToBigEndian16((uint16_t)~(1<<15));
-    ac->challenge.requirePacketAuthAndDerivationCount |=
-        Endian_hostToBigEndian16(require<<15);
+    if (require) {
+        ac->challenge.requirePacketAuthAndDerivationCount |=
+            Endian_hostToBigEndian16(1<<15);
+    } else {
+        ac->challenge.requirePacketAuthAndDerivationCount &=
+            Endian_hostToBigEndian16(~(1<<15));
+    }
 }
 
 static inline uint16_t Headers_getAuthChallengeDerivations(union Headers_AuthChallenge* ac)
@@ -298,6 +303,70 @@ struct Headers_IP6Header
 #define Headers_IP6Header_SIZE 40
 Assert_compileTime(sizeof(struct Headers_IP6Header) == Headers_IP6Header_SIZE);
 
+struct Headers_IP6Fragment
+{
+    uint8_t nextHeader;
+    uint8_t zero;
+    uint16_t fragmentOffsetAndMoreFragments_be;
+    uint32_t identifier;
+};
+#define Headers_IP6Fragment_SIZE 8
+Assert_compileTime(sizeof(struct Headers_IP6Fragment) == Headers_IP6Fragment_SIZE);
+#define Headers_IP6Fragment_TYPE 44
+
+static inline uint32_t Headers_IP6Fragment_getOffset(struct Headers_IP6Fragment* frag)
+{
+    return Endian_bigEndianToHost16(frag->fragmentOffsetAndMoreFragments_be) >> 3;
+}
+
+static inline void Headers_IP6Fragment_setOffset(struct Headers_IP6Fragment* frag, uint16_t offset)
+{
+    frag->fragmentOffsetAndMoreFragments_be &= Endian_hostToBigEndian16(7);
+    frag->fragmentOffsetAndMoreFragments_be |= Endian_hostToBigEndian16(offset << 3);
+}
+
+static inline bool Headers_IP6Fragment_hasMoreFragments(struct Headers_IP6Fragment* frag)
+{
+    return frag->fragmentOffsetAndMoreFragments_be & Endian_hostToBigEndian16(1);
+}
+
+static inline void Headers_IP6Fragment_setMoreFragments(struct Headers_IP6Fragment* frag, bool more)
+{
+    if (more) {
+        frag->fragmentOffsetAndMoreFragments_be |= Endian_hostToBigEndian16(1);
+    } else {
+        frag->fragmentOffsetAndMoreFragments_be &= Endian_hostToBigEndian16(0xFFFF << 1);
+    }
+}
+
+struct Headers_IP4Header
+{
+    uint8_t versionAndHeaderLength;
+    uint8_t differentiatedServices;
+    uint16_t totalLength_be;
+    uint16_t identification_be;
+    uint16_t flagsAndFragmentOffset;
+    uint8_t ttl;
+    uint8_t protocol;
+    uint16_t checksum_be;
+    uint8_t sourceAddr[4];
+    uint8_t destAddr[4];
+};
+#define Headers_IP4Header_SIZE 20
+Assert_compileTime(sizeof(struct Headers_IP4Header) == Headers_IP4Header_SIZE);
+
+static inline int Headers_getIpVersion(void* header)
+{
+    return (((uint8_t*) header)[0] & 0xF0) >> 4;
+}
+
+#define Headers_setIpVersion(header) \
+    ((uint8_t*) header)[0] |= (                                          \
+        (sizeof(*header) == Headers_IP4Header_SIZE) ? 4 : 6              \
+    ) << 4;                                                              \
+    Assert_compileTime(sizeof(*header) == Headers_IP4Header_SIZE         \
+        || sizeof(*header) == Headers_IP6Header_SIZE)
+
 struct Headers_UDPHeader {
     uint32_t sourceAndDestPorts;
     uint16_t length_be;
@@ -305,5 +374,26 @@ struct Headers_UDPHeader {
 };
 #define Headers_UDPHeader_SIZE 8
 Assert_compileTime(sizeof(struct Headers_UDPHeader) == Headers_UDPHeader_SIZE);
+
+struct Headers_ICMP6Header {
+    uint8_t type;
+    uint8_t code;
+    uint16_t checksum;
+    uint32_t additional;
+};
+#define Headers_ICMP6Header_SIZE 8
+Assert_compileTime(sizeof(struct Headers_ICMP6Header) == Headers_ICMP6Header_SIZE);
+
+/**
+ * A message which is broadcast to signal to other nodes in the local network that they can connect.
+ */
+#define Headers_Beacon_PASSWORD_LEN 20
+struct Headers_Beacon {
+    uint32_t version_be;
+    uint8_t password[Headers_Beacon_PASSWORD_LEN];
+    uint8_t publicKey[32];
+};
+#define Headers_Beacon_SIZE 56
+Assert_compileTime(sizeof(struct Headers_Beacon) == Headers_Beacon_SIZE);
 
 #endif

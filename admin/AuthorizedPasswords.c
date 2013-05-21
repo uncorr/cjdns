@@ -15,17 +15,13 @@
 #include "admin/AuthorizedPasswords.h"
 #include "benc/Int.h"
 #include "memory/BufferAllocator.h"
+#include "util/platform/libc/strlen.h"
 
 struct Context
 {
     struct Admin* admin;
     struct CryptoAuth* ca;
     struct Allocator* allocator;
-};
-
-struct User
-{
-    uint64_t trust;
 };
 
 static void sendResponse(String* msg, struct Admin* admin, String* txid)
@@ -52,10 +48,7 @@ static void add(Dict* args, void* vcontext, String* txid)
         return;
     }
 
-    struct User* u = context->allocator->malloc(sizeof(struct User), context->allocator);
-    // At some point this will be implemented...
-    u->trust = 0;
-    int32_t ret = CryptoAuth_addUser(passwd, *authType, u, context->ca);
+    int32_t ret = CryptoAuth_addUser(passwd, *authType, context, context->ca);
 
     switch (ret) {
         case 0:
@@ -79,7 +72,8 @@ static void add(Dict* args, void* vcontext, String* txid)
 static void flush(Dict* args, void* vcontext, String* txid)
 {
     struct Context* context = (struct Context*) vcontext;
-    CryptoAuth_flushUsers(context->ca);
+    // We only remove users which were added using this api.
+    CryptoAuth_removeUsers(context->ca, context);
     sendResponse(String_CONST("none"), context->admin, txid);
 }
 
@@ -87,14 +81,15 @@ void AuthorizedPasswords_init(struct Admin* admin,
                               struct CryptoAuth* ca,
                               struct Allocator* allocator)
 {
-    struct Context* context = allocator->malloc(sizeof(struct Context), allocator);
+    struct Context* context = Allocator_malloc(allocator, sizeof(struct Context));
     context->admin = admin;
     context->allocator = allocator;
     context->ca = ca;
-    struct Admin_FunctionArg adma[2] = {
-        { .name = "password", .required = 1, .type = "String" },
-        { .name = "authType", .required = 0, .type = "Int" }
-    };
-    Admin_registerFunction("AuthorizedPasswords_add", add, context, true, adma, admin);
+
+    Admin_registerFunction("AuthorizedPasswords_add", add, context, true,
+        ((struct Admin_FunctionArg[]){
+            { .name = "password", .required = 1, .type = "String" },
+            { .name = "authType", .required = 0, .type = "Int" }
+        }), admin);
     Admin_registerFunction("AuthorizedPasswords_flush", flush, context, true, NULL, admin);
 }

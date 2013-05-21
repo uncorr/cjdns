@@ -43,7 +43,7 @@ struct RouterModule
     struct DHTModuleRegistry* registry;
 
     /** The libevent event base for handling timeouts. */
-    struct event_base* eventBase;
+    struct EventBase* eventBase;
 
     struct Janitor* janitor;
 
@@ -61,6 +61,8 @@ struct RouterModule
 
     uint8_t gitVersionBytes[20];
     String gitVersion;
+
+    struct Random* rand;
 };
 
 #endif

@@ -18,15 +18,16 @@
 #include "benc/String.h"
 #include "benc/Dict.h"
 #include "memory/Allocator.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
+#include "util/events/EventBase.h"
+#include "util/platform/Sockaddr.h"
 
-#include <event2/event.h>
+#include <stdint.h>
 
 void Configurator_config(Dict* config,
-                         struct sockaddr_storage* addr,
-                         int addrLen,
+                         struct Sockaddr* addr,
                          String* adminPassword,
-                         struct event_base* eventBase,
+                         struct EventBase* eventBase,
                          struct Log* logger,
                          struct Allocator* alloc);
 

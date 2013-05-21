@@ -42,7 +42,7 @@ static void lookup(Dict* args, void* vcontext, String* txid)
         struct Node* n = RouterModule_lookup(addr, ctx->routerModule);
         if (!n) {
             result = "not found";
-        } else if (memcmp(addr, n->address.ip6.bytes, 16)) {
+        } else if (Bits_memcmp(addr, n->address.ip6.bytes, 16)) {
             Address_print(resultBuff, &n->address);
         } else {
             AddrTools_printPath(resultBuff, n->address.path);
@@ -59,11 +59,11 @@ void RouterModule_admin_register(struct RouterModule* module,
                                  struct Admin* admin,
                                  struct Allocator* alloc)
 {
-    struct Context* ctx = alloc->clone(sizeof(struct Context), alloc, &(struct Context) {
+    struct Context* ctx = Allocator_clone(alloc, (&(struct Context) {
         .admin = admin,
         .allocator = alloc,
         .routerModule = module
-    });
+    }));
 
     struct Admin_FunctionArg adma[] = {
         { .name = "address", .required = 1, .type = "String" }

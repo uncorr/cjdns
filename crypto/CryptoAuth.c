@@ -12,18 +12,20 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include "crypto/Crypto.h"
 #include "crypto/CryptoAuth_pvt.h"
+#include "crypto/AddressCalc.h"
 #include "crypto/ReplayProtector.h"
+#include "crypto/random/Random.h"
 #include "interface/Interface.h"
 #include "benc/Object.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
 #include "memory/Allocator.h"
 #include "util/Assert.h"
+#include "util/AddrTools.h"
 #include "util/Bits.h"
 #include "util/Endian.h"
 #include "util/Hex.h"
-#include "util/Time.h"
+#include "util/events/Time.h"
 #include "wire/Error.h"
 #include "wire/Headers.h"
 #include "wire/Message.h"
@@ -37,8 +39,6 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <string.h>
-#include <event2/event.h>
 
 #ifdef WIN32
     #undef interface
@@ -159,10 +159,12 @@ static inline struct CryptoAuth_Auth* getAuth(union Headers_AuthChallenge auth,
         return NULL;
     }
     for (uint32_t i = 0; i < context->passwordCount; i++) {
-        if (memcmp(auth.bytes, &context->passwords[i], Headers_AuthChallenge_KEYSIZE) == 0) {
+        if (Bits_memcmp(auth.bytes, &context->passwords[i], Headers_AuthChallenge_KEYSIZE) == 0) {
             return &context->passwords[i];
         }
     }
+    Log_debug(context->logger, "Got unrecognized auth, password count = [%d]",
+              context->passwordCount);
     return NULL;
 }
 
@@ -222,7 +224,7 @@ static inline int decryptRndNonce(uint8_t nonce[24],
     uint8_t* startAt = msg->bytes - 16;
     uint8_t paddingSpace[16];
     Bits_memcpyConst(paddingSpace, startAt, 16);
-    memset(startAt, 0, 16);
+    Bits_memset(startAt, 0, 16);
     if (crypto_box_curve25519xsalsa20poly1305_open_afternm(
             startAt, startAt, msg->length + 16, nonce, secret) != 0)
     {
@@ -251,7 +253,7 @@ static inline void encryptRndNonce(uint8_t nonce[24],
     // This function trashes 16 bytes of the padding so we will put it back
     uint8_t paddingSpace[16];
     Bits_memcpyConst(paddingSpace, startAt, 16);
-    memset(startAt, 0, 32);
+    Bits_memset(startAt, 0, 32);
     crypto_box_curve25519xsalsa20poly1305_afternm(
         startAt, startAt, msg->length + 32, nonce, secret);
 
@@ -346,6 +348,27 @@ static inline bool knowHerKey(struct CryptoAuth_Wrapper* wrapper)
     return !Bits_isZero(wrapper->herPerminentPubKey, 32);
 }
 
+static void getIp6(struct CryptoAuth_Wrapper* wrapper, uint8_t* addr)
+{
+    if (knowHerKey(wrapper)) {
+        uint8_t ip6[16];
+        AddressCalc_addressForPublicKey(ip6, wrapper->herPerminentPubKey);
+        AddrTools_printIp(addr, ip6);
+    }
+}
+
+#define cryptoAuthDebug(wrapper, format, ...) \
+    {                                                                        \
+        uint8_t addr[40] = "unknown";                                        \
+        getIp6(wrapper, addr);                                               \
+        Log_debug(wrapper->context->logger,                                  \
+                  "%p [%s]: " format, (void*)wrapper, addr, __VA_ARGS__);    \
+    }
+
+#define cryptoAuthDebug0(wrapper, format) \
+    cryptoAuthDebug(wrapper, format "%s", "")
+
+
 /**
  * If we don't know her key, the handshake has to be done backwards.
  * Reverse handshake requests are signaled by sending a non-obfuscated zero nonce.
@@ -359,13 +382,12 @@ static uint8_t genReverseHandshake(struct Message* message,
 
     // Buffer the packet so it can be sent ASAP
     if (wrapper->bufferedMessage == NULL) {
-        Log_debug(wrapper->context->logger, "Buffered a message.\n");
+        cryptoAuthDebug0(wrapper, "Buffered a message");
         wrapper->bufferedMessage =
             Message_clone(message, wrapper->externalInterface.allocator);
         Assert_true(wrapper->nextNonce == 0);
     } else {
-        Log_debug(wrapper->context->logger,
-                  "Expelled a message because a session has not yet been setup.\n");
+        cryptoAuthDebug0(wrapper, "Expelled a message because a session has not yet been setup");
         Message_copyOver(wrapper->bufferedMessage,
                          message,
                          wrapper->externalInterface.allocator);
@@ -380,21 +402,21 @@ static uint8_t genReverseHandshake(struct Message* message,
 
     // sessionState must be 0, auth and 24 byte nonce are garbaged and public key is set
     // now garbage the authenticator and the encrypted key which are not used.
-    randombytes((uint8_t*) &header->handshake.authenticator, 48);
+    Random_bytes(wrapper->context->rand, (uint8_t*) &header->handshake.authenticator, 48);
 
     return wrapper->wrappedInterface->sendMessage(message, wrapper->wrappedInterface);
 }
 
 static uint8_t encryptHandshake(struct Message* message, struct CryptoAuth_Wrapper* wrapper)
 {
-    Assert_true(message->padding >= sizeof(union Headers_CryptoAuth) || !"not enough padding");
-
     Message_shift(message, sizeof(union Headers_CryptoAuth));
 
     union Headers_CryptoAuth* header = (union Headers_CryptoAuth*) message->bytes;
 
     // garbage the auth field to frustrate DPI and set the nonce (next 24 bytes after the auth)
-    randombytes((uint8_t*) &header->handshake.auth, sizeof(union Headers_AuthChallenge) + 24);
+    Random_bytes(wrapper->context->rand,
+                 (uint8_t*) &header->handshake.auth,
+                 sizeof(union Headers_AuthChallenge) + 24);
     Bits_memcpyConst(&header->handshake.publicKey, wrapper->context->pub.publicKey, 32);
 
     if (!knowHerKey(wrapper)) {
@@ -420,8 +442,9 @@ static uint8_t encryptHandshake(struct Message* message, struct CryptoAuth_Wrapp
 
     if (wrapper->nextNonce == 0 || wrapper->nextNonce == 2) {
         // If we're sending a hello or a key
-        crypto_box_curve25519xsalsa20poly1305_keypair(header->handshake.encryptedTempKey,
-                                                      wrapper->secret);
+        Random_bytes(wrapper->context->rand, wrapper->secret, 32);
+        crypto_scalarmult_curve25519_base(header->handshake.encryptedTempKey,  wrapper->secret);
+
         #ifdef Log_KEYS
             uint8_t tempPrivateKeyHex[65];
             Hex_encode(tempPrivateKeyHex, 65, wrapper->secret, 32);
@@ -464,30 +487,23 @@ static uint8_t encryptHandshake(struct Message* message, struct CryptoAuth_Wrapp
     uint8_t sharedSecret[32];
     if (wrapper->nextNonce < 2) {
         if (wrapper->nextNonce == 0) {
-            Log_debug(wrapper->context->logger, "@%p Sending hello packet\n", (void*) wrapper);
+            cryptoAuthDebug0(wrapper, "Sending hello packet");
         } else {
-            Log_debug(wrapper->context->logger, "@%p Sending repeat hello packet\n",
-                       (void*) wrapper);
+            cryptoAuthDebug0(wrapper, "Sending repeat hello packet");
         }
         getSharedSecret(sharedSecret,
                         wrapper->context->privateKey,
                         wrapper->herPerminentPubKey,
                         passwordHash,
                         wrapper->context->logger);
+
         wrapper->isInitiator = true;
         wrapper->nextNonce = 1;
-        #ifdef Log_DEBUG
-            Assert_true(!Bits_isZero(header->handshake.encryptedTempKey, 32));
-            uint8_t myTempPubKey[32];
-            crypto_scalarmult_curve25519_base(myTempPubKey, wrapper->secret);
-            Assert_true(!memcmp(header->handshake.encryptedTempKey, myTempPubKey, 32));
-        #endif
     } else {
         if (wrapper->nextNonce == 2) {
-            Log_debug(wrapper->context->logger, "@%p Sending key packet\n", (void*) wrapper);
+            cryptoAuthDebug0(wrapper, "Sending key packet");
         } else {
-            Log_debug(wrapper->context->logger, "@%p Sending repeat key packet\n",
-                       (void*) wrapper);
+            cryptoAuthDebug0(wrapper, "Sending repeat key packet");
         }
         // Handshake2 wrapper->tempKey holds her public temp key.
         // it was put there by receiveMessage()
@@ -559,20 +575,13 @@ static inline uint8_t encryptMessage(struct Message* message,
 
 static uint8_t sendMessage(struct Message* message, struct Interface* interface)
 {
-    struct CryptoAuth_Wrapper* wrapper = (struct CryptoAuth_Wrapper*) interface->senderContext;
+    struct CryptoAuth_Wrapper* wrapper =
+        Identity_cast((struct CryptoAuth_Wrapper*) interface->senderContext);
 
     // If there has been no incoming traffic for a while, reset the connection to state 0.
     // This will prevent "connection in bad state" situations from lasting forever.
-    uint64_t nowSecs = Time_currentTimeSeconds(wrapper->context->eventBase);
-
-    if (nowSecs - wrapper->timeOfLastPacket > wrapper->context->pub.resetAfterInactivitySeconds) {
-        Log_debug(wrapper->context->logger, "No traffic in [%d] seconds, resetting connection.",
-                  (int) (nowSecs - wrapper->timeOfLastPacket));
-
-        wrapper->timeOfLastPacket = nowSecs;
-        CryptoAuth_reset(interface);
-        return encryptHandshake(message, wrapper);
-    }
+    // this will reset the session if it has timed out.
+    CryptoAuth_getState(interface);
 
     #ifdef Log_DEBUG
         Assert_true(!((uintptr_t)message->bytes % 4) || !"alignment fault");
@@ -590,8 +599,7 @@ static uint8_t sendMessage(struct Message* message, struct Interface* interface)
         if (wrapper->nextNonce < 4) {
             return encryptHandshake(message, wrapper);
         } else {
-            Log_debug(wrapper->context->logger,
-                       "@%p Doing final step to send message. nonce=4\n", (void*) wrapper);
+            cryptoAuthDebug0(wrapper, "Doing final step to send message. nonce=4");
             uint8_t secret[32];
             getSharedSecret(secret,
                             wrapper->secret,
@@ -609,15 +617,13 @@ static uint8_t sendMessage(struct Message* message, struct Interface* interface)
 static inline uint8_t callReceivedMessage(struct CryptoAuth_Wrapper* wrapper,
                                           struct Message* message)
 {
+    if (wrapper->authenticatePackets) {
+        wrapper->timeOfLastPacket = Time_currentTimeSeconds(wrapper->context->eventBase);
+    }
+
     uint8_t ret = 0;
     if (wrapper->externalInterface.receiveMessage != NULL) {
         ret = wrapper->externalInterface.receiveMessage(message, &wrapper->externalInterface);
-    }
-
-    // If the message is authenticated OR if the packet is considered valid by the next level,
-    // then don't allow the connection to timeout.
-    if (!ret || wrapper->authenticatePackets) {
-        wrapper->timeOfLastPacket = Time_currentTimeSeconds(wrapper->context->eventBase);
     }
 
     return ret;
@@ -632,25 +638,16 @@ static inline bool decryptMessage(struct CryptoAuth_Wrapper* wrapper,
         // Decrypt with authentication and replay prevention.
         int ret = decrypt(nonce, content, secret, wrapper->isInitiator, true);
         if (ret) {
-            Log_debug(wrapper->context->logger,
-                       "Authenticated decryption failed returning %u\n",
-                       ret);
+            cryptoAuthDebug(wrapper, "Authenticated decryption failed returning %u", ret);
             return false;
         }
         ret = !ReplayProtector_checkNonce(nonce, &wrapper->replayProtector);
         if (ret) {
-            Log_debug(wrapper->context->logger, "Nonce checking failed.\n");
+            cryptoAuthDebug0(wrapper, "Nonce checking failed");
             return false;
         }
     } else {
         decrypt(nonce, content, secret, wrapper->isInitiator, false);
-    }
-    int ret = callReceivedMessage(wrapper, content);
-    if (ret) {
-        Log_debug(wrapper->context->logger,
-                   "Call received message failed returning %u\n",
-                   ret);
-        return false;
     }
     return true;
 }
@@ -660,8 +657,8 @@ static uint8_t decryptHandshake(struct CryptoAuth_Wrapper* wrapper,
                                 struct Message* message,
                                 union Headers_CryptoAuth* header)
 {
-    if (message->length < sizeof(union Headers_CryptoAuth)) {
-        Log_debug(wrapper->context->logger, "Dropped runt packet\n");
+    if (message->length < Headers_CryptoAuth_SIZE) {
+        cryptoAuthDebug0(wrapper, "Dropped runt packet");
         return Error_UNDERSIZE_MESSAGE;
     }
 
@@ -684,6 +681,7 @@ static uint8_t decryptHandshake(struct CryptoAuth_Wrapper* wrapper,
         message->length = 0;
         wrapper->nextNonce = 0;
         wrapper->user = NULL;
+        cryptoAuthDebug0(wrapper, "Got a connect-to-me message, sending a hello");
         // Send an empty response (to initiate the connection).
         encryptHandshake(message, wrapper);
         return Error_NONE;
@@ -693,13 +691,12 @@ static uint8_t decryptHandshake(struct CryptoAuth_Wrapper* wrapper,
     uint8_t passwordHashStore[32];
     uint8_t* passwordHash = tryAuth(header, passwordHashStore, wrapper, &user);
     if (wrapper->requireAuth && !user) {
-        Log_debug(wrapper->context->logger,
-                  "Dropping message because auth was not given and is required.\n");
+        cryptoAuthDebug0(wrapper, "Dropping message because auth was not given");
         return Error_AUTHENTICATION;
     }
     if (passwordHash == NULL && header->handshake.auth.challenge.type != 0) {
-        Log_debug(wrapper->context->logger,
-                  "Dropping message because it contans an authenticator which is unrecognized.\n");
+        cryptoAuthDebug0(wrapper,
+            "Dropping message because it contans an authenticator which is unrecognized");
         return Error_AUTHENTICATION;
     }
 
@@ -712,12 +709,10 @@ static uint8_t decryptHandshake(struct CryptoAuth_Wrapper* wrapper,
     uint8_t* herPermKey = NULL;
     if (nonce < 2) {
         if (nonce == 0) {
-            Log_debug(wrapper->context->logger,
-                       "@%p Received a hello packet, using auth: %d\n",
-                       (void*) wrapper, (passwordHash != NULL));
+            cryptoAuthDebug(wrapper, "Received a hello packet, using auth: %d",
+                            (passwordHash != NULL));
         } else {
-            Log_debug(wrapper->context->logger, "@%p Received a repeat hello packet\n",
-                       (void*) wrapper);
+            cryptoAuthDebug0(wrapper, "Received a repeat hello packet");
         }
 
         // Decrypt message with perminent keys.
@@ -725,13 +720,13 @@ static uint8_t decryptHandshake(struct CryptoAuth_Wrapper* wrapper,
             herPermKey = header->handshake.publicKey;
             #ifdef Log_DEBUG
                 if (Bits_isZero(header->handshake.publicKey, 32)) {
-                    Log_debug(wrapper->context->logger, "Node sent public key of ZERO!\n");
+                    cryptoAuthDebug0(wrapper, "Node sent public key of ZERO!");
                 }
             #endif
         } else {
             herPermKey = wrapper->herPerminentPubKey;
-            if (memcmp(header->handshake.publicKey, herPermKey, 32)) {
-                Log_debug(wrapper->context->logger, "Packet contains different perminent key.\n");
+            if (Bits_memcmp(header->handshake.publicKey, herPermKey, 32)) {
+                cryptoAuthDebug0(wrapper, "Packet contains different perminent key");
                 return Error_AUTHENTICATION;
             }
         }
@@ -744,16 +739,14 @@ static uint8_t decryptHandshake(struct CryptoAuth_Wrapper* wrapper,
         nextNonce = 2;
     } else {
         if (nonce == 2) {
-            Log_debug(wrapper->context->logger, "@%p Received a key packet\n", (void*) wrapper);
+            cryptoAuthDebug0(wrapper, "Received a key packet");
         } else if (nonce == 3) {
-            Log_debug(wrapper->context->logger, "@%p Received a repeat key packet\n",
-                       (void*) wrapper);
+            cryptoAuthDebug0(wrapper, "Received a repeat key packet");
         } else {
-            Log_debug(wrapper->context->logger,
-                       "Received a packet of unknown type! nonce=%u\n", nonce);
+            cryptoAuthDebug(wrapper, "Received a packet of unknown type! nonce=%u", nonce);
         }
-        if (memcmp(header->handshake.publicKey, wrapper->herPerminentPubKey, 32)) {
-            Log_debug(wrapper->context->logger, "Packet contains different perminent key.\n");
+        if (Bits_memcmp(header->handshake.publicKey, wrapper->herPerminentPubKey, 32)) {
+            cryptoAuthDebug0(wrapper, "Packet contains different perminent key");
             return Error_AUTHENTICATION;
         }
         // We sent the hello, this is a key
@@ -786,9 +779,8 @@ static uint8_t decryptHandshake(struct CryptoAuth_Wrapper* wrapper,
     // Decrypt her temp public key and the message.
     if (decryptRndNonce(header->handshake.nonce, message, sharedSecret) != 0) {
         // just in case
-        memset(header, 0, Headers_CryptoAuth_SIZE);
-        Log_debug(wrapper->context->logger,
-                  "Dropped message because authenticated decryption failed.\n");
+        Bits_memset(header, 0, Headers_CryptoAuth_SIZE);
+        cryptoAuthDebug0(wrapper, "Dropped message because authenticated decryption failed");
         return Error_AUTHENTICATION;
     }
 
@@ -819,15 +811,15 @@ static uint8_t decryptHandshake(struct CryptoAuth_Wrapper* wrapper,
     // If this is a handshake which was initiated in reverse because we
     // didn't know the other node's key, now send what we were going to send.
     if (wrapper->hasBufferedMessage && message->length == 0) {
-        Log_debug(wrapper->context->logger, "Sending buffered message.\n");
+        cryptoAuthDebug0(wrapper, "Sending buffered message");
         sendMessage(wrapper->bufferedMessage, &wrapper->externalInterface);
         wrapper->hasBufferedMessage = false;
         return Error_NONE;
     } else if (wrapper->hasBufferedMessage) {
-        Log_debug(wrapper->context->logger, "There is a buffered message.\n");
+        cryptoAuthDebug0(wrapper, "There is a buffered message");
     }
 
-    memset(&wrapper->replayProtector, 0, sizeof(struct ReplayProtector));
+    Bits_memset(&wrapper->replayProtector, 0, sizeof(struct ReplayProtector));
 
     setRequiredPadding(wrapper);
     return callReceivedMessage(wrapper, message);
@@ -835,11 +827,13 @@ static uint8_t decryptHandshake(struct CryptoAuth_Wrapper* wrapper,
 
 static uint8_t receiveMessage(struct Message* received, struct Interface* interface)
 {
-    struct CryptoAuth_Wrapper* wrapper = (struct CryptoAuth_Wrapper*) interface->receiverContext;
+    struct CryptoAuth_Wrapper* wrapper =
+        Identity_cast((struct CryptoAuth_Wrapper*) interface->receiverContext);
+
     union Headers_CryptoAuth* header = (union Headers_CryptoAuth*) received->bytes;
 
-    if (received->length < (wrapper->requireAuth ? 20 : 4)) {
-        Log_debug(wrapper->context->logger, "Dropped runt");
+    if (received->length < (wrapper->authenticatePackets ? 20 : 4)) {
+        cryptoAuthDebug0(wrapper, "Dropped runt");
         return Error_UNDERSIZE_MESSAGE;
     }
     Assert_true(received->padding >= 12 || "need at least 12 bytes of padding in incoming message");
@@ -852,28 +846,38 @@ static uint8_t receiveMessage(struct Message* received, struct Interface* interf
 
     if (wrapper->nextNonce < 5) {
         if (nonce > 3 && nonce != UINT32_MAX && knowHerKey(wrapper)) {
-            Log_debug(wrapper->context->logger,
-                       "@%p Trying final handshake step, nonce=%u\n", (void*) wrapper, nonce);
+            cryptoAuthDebug(wrapper, "Trying final handshake step, nonce=%u\n", nonce);
             uint8_t secret[32];
             getSharedSecret(secret,
                             wrapper->secret,
                             wrapper->tempKey,
                             NULL,
                             wrapper->context->logger);
+
+            // We'll optimistically advance the nextNonce value because decryptMessage()
+            // passes the message on to the upper level and if this message causes a
+            // response, we want the CA to be in ESTABLISHED state.
+            // if the decryptMessage() call fails, we CryptoAuth_reset() it back.
+            wrapper->nextNonce += 3;
+
             if (decryptMessage(wrapper, nonce, received, secret)) {
-                Log_debug(wrapper->context->logger, "Final handshake step succeeded.\n");
-                wrapper->nextNonce += 3;
+                cryptoAuthDebug0(wrapper, "Final handshake step succeeded");
                 Bits_memcpyConst(wrapper->secret, secret, 32);
-                return Error_NONE;
+                return callReceivedMessage(wrapper, received);
             }
             CryptoAuth_reset(&wrapper->externalInterface);
-            Log_debug(wrapper->context->logger, "Final handshake step failed.\n");
+            cryptoAuthDebug0(wrapper, "Final handshake step failed");
+            return Error_UNDELIVERABLE;
         }
-    } else if (nonce > 2 && decryptMessage(wrapper, nonce, received, wrapper->secret)) {
-        // If decryptMessage returns false then we will try the packet as a handshake.
-        return Error_NONE;
+    } else if (nonce > 4) {
+        if (decryptMessage(wrapper, nonce, received, wrapper->secret)) {
+            return callReceivedMessage(wrapper, received);
+        } else {
+            cryptoAuthDebug0(wrapper, "Failed to decrypt message");
+            return Error_UNDELIVERABLE;
+        }
     } else {
-        Log_debug(wrapper->context->logger, "Decryption failed, trying message as a handshake.\n");
+        cryptoAuthDebug0(wrapper, "Received handshake message during established connection");
     }
     Message_shift(received, 4);
     return decryptHandshake(wrapper, nonce, received, header);
@@ -883,25 +887,28 @@ static uint8_t receiveMessage(struct Message* received, struct Interface* interf
 
 struct CryptoAuth* CryptoAuth_new(struct Allocator* allocator,
                                   const uint8_t* privateKey,
-                                  struct event_base* eventBase,
-                                  struct Log* logger)
+                                  struct EventBase* eventBase,
+                                  struct Log* logger,
+                                  struct Random* rand)
 {
-    struct CryptoAuth_pvt* ca = allocator->calloc(sizeof(struct CryptoAuth_pvt), 1, allocator);
+    struct CryptoAuth_pvt* ca = Allocator_calloc(allocator, sizeof(struct CryptoAuth_pvt), 1);
     ca->allocator = allocator;
 
-    ca->passwords = allocator->calloc(sizeof(struct CryptoAuth_Auth), 256, allocator);
+    ca->passwords = Allocator_calloc(allocator, sizeof(struct CryptoAuth_Auth), 256);
     ca->passwordCount = 0;
     ca->passwordCapacity = 256;
     ca->eventBase = eventBase;
     ca->logger = logger;
     ca->pub.resetAfterInactivitySeconds = CryptoAuth_DEFAULT_RESET_AFTER_INACTIVITY_SECONDS;
+    ca->rand = rand;
+    Identity_set(ca);
 
     if (privateKey != NULL) {
         Bits_memcpyConst(ca->privateKey, privateKey, 32);
-        crypto_scalarmult_curve25519_base(ca->pub.publicKey, ca->privateKey);
     } else {
-        crypto_box_curve25519xsalsa20poly1305_keypair(ca->pub.publicKey, ca->privateKey);
+        Random_bytes(rand, ca->privateKey, 32);
     }
+    crypto_scalarmult_curve25519_base(ca->pub.publicKey, ca->privateKey);
 
     #ifdef Log_KEYS
         uint8_t publicKeyHex[65];
@@ -922,7 +929,7 @@ int32_t CryptoAuth_addUser(String* password,
                            void* user,
                            struct CryptoAuth* ca)
 {
-    struct CryptoAuth_pvt* context = (struct CryptoAuth_pvt*) ca;
+    struct CryptoAuth_pvt* context = Identity_cast((struct CryptoAuth_pvt*) ca);
     if (authType != 1) {
         return CryptoAuth_addUser_INVALID_AUTHTYPE;
     }
@@ -933,7 +940,7 @@ int32_t CryptoAuth_addUser(String* password,
     struct CryptoAuth_Auth a;
     hashPassword_sha256(&a, password);
     for (uint32_t i = 0; i < context->passwordCount; i++) {
-        if (!memcmp(a.secret, context->passwords[i].secret, 32)) {
+        if (!Bits_memcmp(a.secret, context->passwords[i].secret, 32)) {
             return CryptoAuth_addUser_DUPLICATE;
         }
     }
@@ -945,14 +952,36 @@ int32_t CryptoAuth_addUser(String* password,
     return 0;
 }
 
-void CryptoAuth_flushUsers(struct CryptoAuth* context)
+int CryptoAuth_removeUsers(struct CryptoAuth* context, void* uid)
 {
-    ((struct CryptoAuth_pvt*) context)->passwordCount = 0;
+    struct CryptoAuth_pvt* ctx = Identity_cast((struct CryptoAuth_pvt*) context);
+    if (!uid) {
+        int count = ctx->passwordCount;
+        Log_debug(ctx->logger, "Flushing [%d] users", count);
+        ctx->passwordCount = 0;
+        return count;
+    }
+    int count = 0;
+    int i = 0;
+    while (i < (int)ctx->passwordCount) {
+        if (ctx->passwords[i].user == uid) {
+            Bits_memcpyConst(&ctx->passwords[i],
+                             &ctx->passwords[ctx->passwordCount--],
+                             sizeof(struct CryptoAuth_Auth));
+            count++;
+        } else {
+            i++;
+        }
+    }
+    Log_debug(ctx->logger, "Removing [%d] user(s) identified by [%p]", count, uid);
+    return count;
 }
 
 void* CryptoAuth_getUser(struct Interface* interface)
 {
-    struct CryptoAuth_Wrapper* wrapper = (struct CryptoAuth_Wrapper*) interface->senderContext;
+    struct CryptoAuth_Wrapper* wrapper =
+        Identity_cast((struct CryptoAuth_Wrapper*)interface->senderContext);
+
     void* user = wrapper->user;
     if (user) {
         // If the user was lost in flushusers, then we need to return null.
@@ -973,19 +1002,19 @@ struct Interface* CryptoAuth_wrapInterface(struct Interface* toWrap,
                                            bool authenticatePackets,
                                            struct CryptoAuth* ca)
 {
-    struct CryptoAuth_pvt* context = (struct CryptoAuth_pvt*) ca;
-    struct CryptoAuth_Wrapper* wrapper =
-        toWrap->allocator->clone(sizeof(struct CryptoAuth_Wrapper), toWrap->allocator,
-            &(struct CryptoAuth_Wrapper) {
-                .user = NULL,
-                .nextNonce = 0,
-                .context = context,
-                .wrappedInterface = toWrap,
-                .requireAuth = requireAuth,
-                .authenticatePackets = authenticatePackets,
-                .timeOfLastPacket = Time_currentTimeSeconds(context->eventBase)
-            });
+    struct CryptoAuth_pvt* context = Identity_cast((struct CryptoAuth_pvt*) ca);
+    struct CryptoAuth_Wrapper* wrapper = Allocator_clone(toWrap->allocator,
+        (&(struct CryptoAuth_Wrapper) {
+            .user = NULL,
+            .nextNonce = 0,
+            .context = context,
+            .wrappedInterface = toWrap,
+            .requireAuth = requireAuth,
+            .authenticatePackets = authenticatePackets,
+            .timeOfLastPacket = Time_currentTimeSeconds(context->eventBase)
+        }));
 
+    Identity_set(wrapper);
     toWrap->receiverContext = wrapper;
     toWrap->receiveMessage = receiveMessage;
 
@@ -1007,7 +1036,8 @@ void CryptoAuth_setAuth(const String* password,
                         const uint8_t authType,
                         struct Interface* wrappedInterface)
 {
-    struct CryptoAuth_Wrapper* wrapper = wrappedInterface->senderContext;
+    struct CryptoAuth_Wrapper* wrapper =
+        Identity_cast((struct CryptoAuth_Wrapper*)wrappedInterface->senderContext);
     wrapper->password = (password != NULL)
         ? String_newBinary(password->bytes, password->len, wrappedInterface->allocator)
         : NULL;
@@ -1021,27 +1051,56 @@ uint8_t* CryptoAuth_getHerPublicKey(struct Interface* interface)
 
 void CryptoAuth_reset(struct Interface* interface)
 {
-    struct CryptoAuth_Wrapper* wrapper = interface->senderContext;
+    struct CryptoAuth_Wrapper* wrapper =
+        Identity_cast((struct CryptoAuth_Wrapper*)interface->senderContext);
     wrapper->nextNonce = 0;
     wrapper->isInitiator = false;
-    memset(&wrapper->replayProtector, 0, sizeof(struct ReplayProtector));
+    Bits_memset(&wrapper->replayProtector, 0, sizeof(struct ReplayProtector));
 }
 
 int CryptoAuth_getState(struct Interface* interface)
 {
-    struct CryptoAuth_Wrapper* wrapper = interface->senderContext;
+    struct CryptoAuth_Wrapper* wrapper =
+        Identity_cast((struct CryptoAuth_Wrapper*)interface->senderContext);
+
+    uint64_t nowSecs = Time_currentTimeSeconds(wrapper->context->eventBase);
+    if (nowSecs - wrapper->timeOfLastPacket > wrapper->context->pub.resetAfterInactivitySeconds) {
+        cryptoAuthDebug(wrapper, "No traffic in [%d] seconds, resetting connection.",
+                  (int) (nowSecs - wrapper->timeOfLastPacket));
+
+        wrapper->timeOfLastPacket = nowSecs;
+        CryptoAuth_reset(interface);
+    }
+
     switch (wrapper->nextNonce) {
         case 0:
             return CryptoAuth_NEW;
-        case 1:
+        case 1: // Sent a hello, waiting for the key
             return CryptoAuth_HANDSHAKE1;
-        case 2:
-        case 3:
-        case 4:
-            // a bit of an oversimplification.
-            // state 4 = waiting for first data packet to prove the handshake succeeded.
+        case 2: // Received a hello, sent a key packet.
+        case 3: // Received a hello, sent multiple key packets.
             return CryptoAuth_HANDSHAKE2;
+        case 4:
+            // state 4 = waiting for first data packet to prove the handshake succeeded.
+            // At this point you have sent a challenge and received a response so it is safe
+            // to assume you are not being hit with replay packets.
+            return CryptoAuth_HANDSHAKE3;
         default:
             return CryptoAuth_ESTABLISHED;
     }
+}
+
+struct Interface* CryptoAuth_getConnectedInterface(struct Interface* iface)
+{
+    if (iface->sendMessage == sendMessage) {
+        // internal (plaintext side)
+        struct CryptoAuth_Wrapper* wrapper =
+            Identity_cast((struct CryptoAuth_Wrapper*)iface->senderContext);
+        return wrapper->wrappedInterface;
+    } else if (iface->receiveMessage == receiveMessage) {
+        struct CryptoAuth_Wrapper* wrapper =
+            Identity_cast((struct CryptoAuth_Wrapper*)iface->receiverContext);
+        return &wrapper->externalInterface;
+    }
+    return NULL;
 }

@@ -12,6 +12,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#define string_strcmp
+#define string_strlen
+#include "crypto/random/Random.h"
 #include "crypto/CryptoAuth.h"
 #include "dht/ReplyModule.h"
 #include "dht/dhtcore/RouterModule.h"
@@ -19,12 +22,17 @@
 #include "net/DefaultInterfaceController.h"
 #include "io/Writer.h"
 #include "io/FileWriter.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
+#include "util/log/WriterLog.h"
+#include "util/events/EventBase.h"
+#include "util/platform/libc/string.h"
+#include "memory/CanaryAllocator.h"
 #include "memory/MallocAllocator.h"
 #include "memory/Allocator.h"
 #include "switch/NumberCompress.h"
 #include "switch/SwitchCore.h"
 #include "wire/Headers.h"
+#include "test/TestFramework.h"
 
 static uint8_t messageFromInterface(struct Message* message, struct Interface* thisIf)
 {
@@ -36,9 +44,10 @@ static int reconnectionNewEndpointTest(struct InterfaceController* ifController,
                                        uint8_t* pk,
                                        struct Message** fromSwitchPtr,
                                        struct Allocator* alloc,
-                                       struct event_base* eventBase,
+                                       struct EventBase* eventBase,
                                        struct Log* logger,
-                                       struct Interface* routerIf)
+                                       struct Interface* routerIf,
+                                       struct Random* rand)
 {
     struct Message* message;
     struct Interface iface = {
@@ -47,12 +56,12 @@ static int reconnectionNewEndpointTest(struct InterfaceController* ifController,
         .allocator = alloc
     };
 
-    uint8_t* buffer = alloc->malloc(512, alloc);
+    uint8_t* buffer = Allocator_malloc(alloc, 512);
 
     struct Message* outgoing =
         &(struct Message) { .length = 0, .padding = 512, .bytes = buffer + 512 };
 
-    struct CryptoAuth* externalCa = CryptoAuth_new(alloc, NULL, eventBase, logger);
+    struct CryptoAuth* externalCa = CryptoAuth_new(alloc, NULL, eventBase, logger, rand);
     struct Interface* wrapped = CryptoAuth_wrapInterface(&iface, pk, false, false, externalCa);
     CryptoAuth_setAuth(String_CONST("passwd"), 1, wrapped);
 
@@ -61,9 +70,9 @@ static int reconnectionNewEndpointTest(struct InterfaceController* ifController,
         .sendMessage = messageFromInterface,
         .senderContext = &message
     };
-    ifController->registerInterface(&icIface, ifController);
 
-    char* majic = "\xDE\xAD\xBE\xEF\xCA\xFE\xBA\xBE";
+    InterfaceController_registerPeer(ifController, NULL, NULL, true, false, &icIface);
+
     uint8_t hexBuffer[1025];
 
     for (int i = 0; i < 4; i++) {
@@ -81,10 +90,6 @@ static int reconnectionNewEndpointTest(struct InterfaceController* ifController,
         }), Headers_SwitchHeader_SIZE);
 
         wrapped->sendMessage(outgoing, wrapped);
-
-        // add the id tag
-        Message_shift(outgoing, InterfaceController_KEY_SIZE);
-        Bits_memcpyConst(outgoing->bytes, majic, InterfaceController_KEY_SIZE);
 
         *fromSwitchPtr = NULL;
 
@@ -110,14 +115,11 @@ static int reconnectionNewEndpointTest(struct InterfaceController* ifController,
             printf("sending back response.\n");
             routerIf->receiveMessage(message, routerIf);
             printf("forwarding response to external cryptoAuth.\n");
-            Message_shift(message, -InterfaceController_KEY_SIZE);
             iface.receiveMessage(message, &iface);
             printf("forwarded.\n");
         } else {
             printf("not responding because we don't want to establish a connection yet.\n");
         }
-
-        majic = "\xC0\xFF\xEE\x00\x11\x22\x33\x44";
     }
 
     // check everything except the label
@@ -138,42 +140,32 @@ static int reconnectionNewEndpointTest(struct InterfaceController* ifController,
 
 int main()
 {
-    struct Allocator* alloc = MallocAllocator_new(1<<20);
+    struct Allocator* alloc = CanaryAllocator_new(MallocAllocator_new(1<<20), NULL);
 
-    struct Writer* logwriter = FileWriter_new(stdout, alloc);
-    struct Log* logger = &(struct Log) { .writer = logwriter };
+    struct TestFramework* tf =
+        TestFramework_setUp("\xad\x7e\xa3\x26\xaa\x01\x94\x0a\x25\xbc\x9e\x01\x26\x22\xdb\x69"
+                            "\x4f\xd9\xb4\x17\x7c\xf3\xf8\x91\x16\xf3\xcf\xe8\x5c\x80\xe1\x4a",
+                            alloc, NULL);
 
-    struct event_base* eventBase = event_base_new();
+    CryptoAuth_addUser(String_CONST("passwd"), 1, (void*)0x01, tf->cryptoAuth);
 
-    struct CryptoAuth* ca = CryptoAuth_new(alloc, NULL, eventBase, logger);
-    uint8_t publicKey[32];
-    Bits_memcpyConst(publicKey, ca->publicKey, 32);
-    CryptoAuth_addUser(String_CONST("passwd"), 1, (void*)0x01, ca);
-
-    struct SwitchCore* switchCore = SwitchCore_new(logger, alloc);
     struct Message* message;
     struct Interface iface = {
         .sendMessage = messageFromInterface,
         .senderContext = &message,
         .allocator = alloc
     };
-    SwitchCore_setRouterInterface(&iface, switchCore);
+    SwitchCore_setRouterInterface(&iface, tf->switchCore);
 
-    // These are unused.
-    struct DHTModuleRegistry* registry = DHTModuleRegistry_new(alloc);
-    struct RouterModule* rm =
-        RouterModule_register(registry, alloc, publicKey, eventBase, logger, NULL);
-
-    struct InterfaceController* ifController =
-        DefaultInterfaceController_new(ca, switchCore, rm, logger, eventBase, NULL, alloc);
 
     ////////////////////////
 
-    return reconnectionNewEndpointTest(ifController,
-                                       publicKey,
+    return reconnectionNewEndpointTest(tf->ifController,
+                                       tf->publicKey,
                                        &message,
                                        alloc,
-                                       eventBase,
-                                       logger,
-                                       &iface);
+                                       tf->eventBase,
+                                       tf->logger,
+                                       &iface,
+                                       tf->rand);
 }

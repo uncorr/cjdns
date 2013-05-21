@@ -17,10 +17,10 @@
 
 #include "benc/String.h"
 #include "interface/Interface.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
 
 #include <stdint.h>
-#include <event2/event.h>
+#include "util/events/EventBase.h"
 
 enum SwitchPinger_Result
 {
@@ -49,14 +49,15 @@ enum SwitchPinger_Result
  * @param label the label as of the responding node in host order.
  * @param data the content of the ping response.
  * @param millisecondsLag the number of milliseconds since the original ping was sent.
+ * @param nodeVersion the version of the node which was pinged.
  * @param onResponseContext a context which was provided to SwitchPinger_ping().
  */
-#define SwitchPinger_ON_RESPONSE(x) \
-    void (* x)(enum SwitchPinger_Result result,           \
-               uint64_t label,                            \
-               String* data,                              \
-               uint32_t millisecondsLag,                  \
-               void* onResponseContext)
+typedef void (* SwitchPinger_ResponseCallback)(enum SwitchPinger_Result result,
+                                               uint64_t label,
+                                               String* data,
+                                               uint32_t millisecondsLag,
+                                               uint32_t nodeVersion,
+                                               void* onResponseContext);
 
 struct SwitchPinger_Ping
 {
@@ -78,20 +79,27 @@ struct SwitchPinger;
 String* SwitchPinger_resultString(enum SwitchPinger_Result result);
 
 /**
- * Send a ping message.
+ * Allocate a ping message.
  *
  * @param label the HOST ORDER label of the node to send the ping message to.
  * @param data the content of the ping to send, if NULL, an empty string will be
  *             returned in the response.
  */
-struct SwitchPinger_Ping* SwitchPinger_ping(uint64_t label,
-                                            String* data,
-                                            uint32_t timeoutMilliseconds,
-                                            SwitchPinger_ON_RESPONSE(onResponse),
-                                            struct SwitchPinger* sp);
+struct SwitchPinger_Ping* SwitchPinger_newPing(uint64_t label,
+                                               String* data,
+                                               uint32_t timeoutMilliseconds,
+                                               SwitchPinger_ResponseCallback onResponse,
+                                               struct SwitchPinger* sp);
+
+/**
+ * Send a ping message after allocating a callback structure for it.
+ *
+ * @param ping the ping to send.
+ */
+void SwitchPinger_sendPing(struct SwitchPinger_Ping* ping);
 
 struct SwitchPinger* SwitchPinger_new(struct Interface* iface,
-                                      struct event_base* eventBase,
+                                      struct EventBase* eventBase,
                                       struct Log* logger,
                                       struct Allocator* alloc);
 

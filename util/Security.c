@@ -12,42 +12,63 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include "exception/ExceptionHandler.h"
-#include "util/Log.h"
+#include "exception/Except.h"
+#include "util/log/Log.h"
+#include "util/Errno.h"
 #include "util/Security.h"
 
 #include <sys/resource.h>
 #include <sys/types.h>
 #include <pwd.h>
-#include <errno.h>
 #include <unistd.h>
+#include "util/platform/libc/string.h"
 
-void Security_setUser(char* userName, struct Log* logger, struct ExceptionHandler* eh)
+void Security_setUser(char* userName, struct Log* logger, struct Except* eh)
 {
-    errno = 0;
     struct passwd* pw = getpwnam(userName);
     if (!pw) {
-        eh->exception(__FILE__ " couldn't find user to set username to.", errno, eh);
+        Except_raise(eh,
+                     Security_setUser_NO_SUCH_USER,
+                     "Failed to set UID, couldn't find user named [%s] in the system.",
+                     Errno_getString());
         return;
     }
     if (setuid(pw->pw_uid)) {
-        if (errno == EPERM) {
-            Log_warn(logger, "You do not have permission to set UID, skipping.\n");
+        if (Errno_get() == Errno_EPERM) {
+            Except_raise(eh, Security_setUser_PERMISSION,
+                         "You do not have permission to set UID.");
             return;
         }
-        eh->exception(__FILE__ " couldn't set UID.", errno, eh);
+        Except_raise(eh, Security_setUser_INTERNAL, "Failed to set UID [%s]",
+                     Errno_getString());
     }
 }
 
-void Security_noFiles(struct ExceptionHandler* eh)
+void Security_noFiles(struct Except* eh)
 {
-    #ifdef BSD
-        #define Security_OPEN_FILE_LIMIT RLIMIT_OFILE
-    #else
-        #define Security_RLIMIT_NOFILE
+    #if !defined(RLIMIT_NOFILE) && defined(RLIMIT_OFILE)
+        #define RLIMIT_NOFILE RLIMIT_OFILE
     #endif
-    errno = 0;
-    if (setrlimit(RLIMIT_NOFILE, &(struct rlimit){ 0, 0 })) {
-        eh->exception(__FILE__ " failed to set open file limit to zero.", errno, eh);
+
+    #ifndef RLIMIT_INFINITY
+        #define LIM 1
+    #else
+        #define LIM 0
+    #endif
+
+    if (setrlimit(RLIMIT_NOFILE, &(struct rlimit){ LIM, LIM })) {
+        Except_raise(eh, -1, "Failed to set open file limit to zero [%s]", Errno_getString());
+    }
+}
+
+void Security_maxMemory(uint32_t max, struct Except* eh)
+{
+    // RLIMIT_DATA doesn't prevent malloc() on linux.
+    // see: http://lkml.indiana.edu/hypermail/linux/kernel/0707.1/0675.html
+    #if !defined(RLIMIT_AS) && defined(RLIMIT_DATA)
+        #define RLIMIT_AS RLIMIT_DATA
+    #endif
+    if (setrlimit(RLIMIT_AS, &(struct rlimit){ max, max })) {
+        Except_raise(eh, -1, "Failed to limit available memory [%s]", Errno_getString());
     }
 }

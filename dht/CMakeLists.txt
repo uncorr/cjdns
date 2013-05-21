@@ -9,8 +9,6 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
-find_package(Libevent2 REQUIRED)
-
 add_subdirectory(dhtcore)
 
 find_package(NACL REQUIRED)
@@ -21,7 +19,6 @@ add_library(dht
     DHTModuleRegistry.c
     SerializationModule.c
     ReplyModule.c
-    AddressMapper.c
 )
 
 # This is needed because NACL must be built first because header files are generated.

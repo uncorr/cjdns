@@ -12,9 +12,13 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#define string_strncpy
+#define string_strlen
 #include "memory/MallocAllocator.h"
+#include "memory/CanaryAllocator.h"
 #include "memory/Allocator.h"
 #include "net/Ducttape.h"
+#include "util/platform/libc/string.h"
 
 #include "test/TestFramework.h"
 
@@ -67,11 +71,14 @@ int main()
         "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
-    struct Ducttape* dt = TestFramework_setUp();
+    struct Allocator* alloc = MallocAllocator_new(1<<22);
+    struct Ducttape* dt =
+        TestFramework_setUp("0123456789abcdefghijklmnopqrstuv", alloc, NULL)->ducttape;
 
-    struct Allocator* allocator = MallocAllocator_new(85000);
+    // This has to be limited because we are checking for an OOM issue.
+    struct Allocator* allocator = CanaryAllocator_new(MallocAllocator_new(85000), NULL);
     uint16_t buffLen = sizeof(struct Ducttape_IncomingForMe) + 8 + strlen(evilBenc);
-    uint8_t* buff = allocator->calloc(buffLen, 1, allocator);
+    uint8_t* buff = Allocator_calloc(allocator, buffLen, 1);
 
     struct Headers_IP6Header* ip6 = (struct Headers_IP6Header*) (buff + Headers_SwitchHeader_SIZE);
     uint8_t* herPublicKey = (uint8_t*) "0123456789abcdefghijklmnopqrstuv";
@@ -88,4 +95,7 @@ int main()
     struct Message m = { .bytes = buff, .length = buffLen, .padding = 0 };
 
     Ducttape_injectIncomingForMe(&m, dt, herPublicKey);
+
+    Allocator_free(alloc);
+    Allocator_free(allocator);
 }

@@ -31,9 +31,9 @@ struct Writer* ArrayWriter_new(void* writeToBuffer,
                                const struct Allocator* allocator)
 {
     struct Writer* writer =
-        allocator->calloc(sizeof(struct Writer), 1, allocator);
+        Allocator_calloc(allocator, sizeof(struct Writer), 1);
     struct ArrayWriter_context* context =
-        allocator->calloc(sizeof(struct ArrayWriter_context), 1, allocator);
+        Allocator_calloc(allocator, sizeof(struct ArrayWriter_context), 1);
 
     if (context == NULL || writer == NULL) {
         return NULL;
@@ -65,7 +65,7 @@ static int write(const void* toWrite, size_t length, const struct Writer* writer
     }
 
     /* Prove that it doesn't run off the end of the buffer or roll over. */
-    if (context->pointer + length >= context->endPointer
+    if (context->pointer + length > context->endPointer
         || context->pointer + length < context->pointer)
     {
         context->returnCode = -1;

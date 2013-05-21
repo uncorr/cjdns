@@ -1,4 +1,5 @@
 #!/bin/bash
+#
 # You may redistribute this program and/or modify it under the terms of
 # the GNU General Public License as published by the Free Software Foundation,
 # either version 3 of the License, or (at your option) any later version.
@@ -13,86 +14,84 @@
 
 ###
 # cjdns.sh
-# copy this file into your cjdns user's hime directory and add
-# */5 * * * * /home/cjdns/cjdns.sh check >>/dev/null 2>>/dev/null
-# to your cron tab for the cjdns user.
 #
-# When you type:
-#  ./cjdns.sh start
-# cjdns will be started and if it should stop for any reason (including the computer beign halted)
-# the cron job will restart it.
-# To stop it and prevent it from restarting, use:
+# Copy this script to the desired location, then add the following to the cjdns user's crontab
+# */5 * * * * /path/to/cjdns.sh check >>/dev/null 2>>/dev/null
+#
+# Start cjdns if it isn't already running (and set the above cronjob to restart failed processes):
+#   ./cjdns.sh start
+#
+# Stop cjdns if it's currently running (and set the above cronjob not to restart failed processes):
 #  ./cjdns.sh stop
-# After doing an update, use:
+#
+# Check whether cjdns is currently running:
+#  ./cjdns.sh status
+#
+# Restart cjdns after upgrades and changes to the config:
 #  ./cjdns.sh restart
-# to stop it and bring it back online immedietly.
 ##
 
 # path of cjdns
-CJDPATH="`dirname $0`/"
+if [ -z "$CJDPATH" ]; then CJDPATH="`dirname $0`/"; fi
 
 # path to the cjdroute process
-CJDROUTE="${CJDPATH}cjdroute"
+if [ -z "$CJDROUTE" ]; then CJDROUTE="${CJDPATH}cjdns/cjdroute"; fi
+
+# path of the cjdns process
+if [ -z "$CJDNS" ]; then CJDNS="${CJDPATH}cjdns/cjdns"; fi
 
 # path to the configuration
-CONF="${CJDPATH}cjdroute.conf"
+if [ -z "$CONF" ]; then CONF="${CJDPATH}cjdroute.conf"; fi
 
 # path ot the log file.
-LOGTO="${CJDPATH}cjdroute.log"
+if [ -z "$LOGTO" ]; then LOGTO="/dev/null"; fi
 
-# location of pid file.
-PIDFILE="`${CJDROUTE} --pidfile < $CONF`"
+PID=$(pgrep -d " " -f "$CJDNS")
 
 stop()
 {
-    if [ -f $PIDFILE ] && kill -0 `cat $PIDFILE` > /dev/null; then
-        kill `cat $PIDFILE`
-        rm $PIDFILE
-    fi
-}
-
-noPid()
-{
-    echo 'Can''t find pid file, please edit cjdroute.conf and make sure'
-    echo 'it is configured to save a pid file. You can get this behavior by adding:'
-    echo '    "pidFile": "/path/to/your/pid.file",'
-    echo 'to your configuration.'
-    echo 'Stopping.'
-    exit 1
+    [ ! -z "$PID" ] && kill $PID &> /dev/null
+    if [ $? -gt 0 ]; then return 1; fi
 }
 
 start()
 {
-    $CJDROUTE < $CONF 2>&1 >> $LOGTO &
-
-    sleep 1
-
-    if [ ! -f $PIDFILE ]; then
-        noPid
+    $CJDROUTE < $CONF &>> $LOGTO
+    if [ $? -gt 0 ]; then
+        echo "Failed to start. (CJDNS already running?)"
+        return 1
     fi
 }
 
-if [ "$PIDFILE" == "" ]; then
-    noPid
-fi
+status()
+{
+    echo -n "* cjdns is "
+    if [ -z "$PID" ]; then
+        echo "not running"
+        exit 1
+    else
+        echo "running"
+        exit 0
+    fi
+}
 
 case "$1" in
-"start" )
-    start
-    ;;
-
-"restart" )
-    stop
-    start
-    ;;
-
-"stop" )
-    stop
-    ;;
-
-"check" )
-    if [ ! -f $PIDFILE ] || ! kill -0 `cat $PIDFILE` > /dev/null; then
+    "start" )
         start
-    fi
-    ;;
+        ;;
+    "restart" )
+        stop
+        start
+        ;;
+    "stop" )
+        stop
+        ;;
+    "status" )
+        status
+        ;;
+    "check" )
+        ps aux | grep -v 'grep' | grep 'cjdns core' > /dev/null 2>/dev/null || start
+        ;;
+    *)
+        echo "usage: /etc/rc.d/cjdns {start|stop|restart|check}"
 esac

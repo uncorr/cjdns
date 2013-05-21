@@ -16,11 +16,13 @@
 #define Admin_H
 
 #include "benc/Dict.h"
-#include "exception/ExceptionHandler.h"
+#include "exception/Except.h"
+#include "interface/addressable/AddrInterface.h"
 #include "memory/Allocator.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
+#include "util/UniqueName.h"
+#include "util/events/EventBase.h"
 
-#include <event2/event.h>
 #include <stdbool.h>
 
 #define Admin_FUNCTION(name) void (* name)(Dict* input, void* context, String* txid)
@@ -34,15 +36,20 @@ struct Admin_FunctionArg
     bool required;
 };
 
+#define Admin_MAX_REQUEST_SIZE 512
+
+// This must not exceed PipeInterface_MAX_MESSAGE_SIZE
+#define Admin_MAX_RESPONSE_SIZE 65536
+
 /**
  * @param arguments an array of struct Admin_FunctionArg specifying what functions are available
  *                  and of those, which are required.
  *        Example C code:
- *            struct Admin_FunctionArg adma[2] = {
- *                { .name = "password", .required = 1, .type = "String" },
- *                { .name = "authType", .required = 0, .type = "Int" }
- *            };
- *            Admin_registerFunction("AuthorizedPasswords_add", add, context, true, adma, admin);
+ *            Admin_registerFunction("AuthorizedPasswords_add", addPass, ctx, true,
+ *                ((struct Admin_FunctionArg[]) {
+ *                    { .name = "password", .required = 1, .type = "String" },
+ *                    { .name = "authType", .required = 0, .type = "Int" }
+ *                }), admin);
  */
 void Admin_registerFunctionWithArgCount(char* name,
                                         Admin_FUNCTION(callback),
@@ -55,19 +62,14 @@ void Admin_registerFunctionWithArgCount(char* name,
     Admin_registerFunctionWithArgCount(                                                           \
         name, cb, ctx, needsAuth, args, (sizeof(args) / sizeof(struct Admin_FunctionArg)), admin)
 
-void Admin_sendMessage(Dict* message, String* txid, struct Admin* admin);
+#define Admin_sendMessage_CHANNEL_CLOSED -1
+int Admin_sendMessage(Dict* message, String* txid, struct Admin* admin);
 
-struct Admin* Admin_new(struct sockaddr_storage* addr,
-                        int addrLen,
-                        String* password,
-                        char* user,
-                        struct event_base* eventBase,
-                        struct ExceptionHandler* eh,
+struct Admin* Admin_new(struct AddrInterface* iface,
+                        struct Allocator* alloc,
                         struct Log* logger,
-                        struct Allocator* allocator);
-
-void Admin_getConnectInfo(struct sockaddr_storage** addrPtr,
-                          int* addrLenPtr,
-                          String** passwordPtr,
-                          struct Admin* admin);
+                        struct EventBase* eventBase,
+                        String* password);
+#else
+#include "util/UniqueName.h"
 #endif

@@ -31,9 +31,9 @@ struct Reader* ArrayReader_new(const void* bufferToRead,
                                const struct Allocator* allocator)
 {
     struct Reader* reader =
-        allocator->calloc(sizeof(struct Reader), 1, allocator);
+        Allocator_calloc(allocator, sizeof(struct Reader), 1);
     struct ArrayReader_context* context =
-        allocator->calloc(sizeof(struct ArrayReader_context), 1, allocator);
+        Allocator_calloc(allocator, sizeof(struct ArrayReader_context), 1);
 
     context->pointer = (char*) bufferToRead;
     context->endPointer = (char*) bufferToRead + length;
@@ -56,7 +56,7 @@ static int read(void* readInto, size_t length, const struct Reader* reader)
         (struct ArrayReader_context*) reader->context;
 
     /* Prove that it doesn't run off the end of the buffer or roll over. */
-    if (context->pointer + length >= context->endPointer
+    if (context->pointer + length > context->endPointer
         || context->pointer + length < context->pointer)
     {
         return -1;

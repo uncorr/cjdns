@@ -12,13 +12,16 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#define string_strncpy
+#define string_strlen
 #include "memory/MallocAllocator.h"
+#include "memory/CanaryAllocator.h"
 #include "memory/Allocator.h"
-#include "net/Ducttape_pvt.h"
 #include "util/Base32.h"
-#include "util/checksum/Checksum.h"
-
+#include "util/Checksum.h"
+#include "util/platform/libc/string.h"
 #include "test/TestFramework.h"
+#include "net/Ducttape_pvt.h"
 
 #include <stdio.h>
 
@@ -30,13 +33,14 @@ uint8_t catchResponse(struct Message* msg, struct Interface* iface)
 
 int main()
 {
-    char* pingBenc = "d1:q4:ping4:txid4:abcde";
-
-    struct Ducttape_Private* dt = (struct Ducttape_Private*) TestFramework_setUp();
+    char* pingBenc = "d1:q4:ping4:txid4:abcd1:pi2ee";
+    struct Allocator* alloc = CanaryAllocator_new(MallocAllocator_new(1<<22), NULL);
+    struct TestFramework* tf = TestFramework_setUp("0123456789abcdefghijklmnopqrstuv", alloc, NULL);
+    struct Ducttape_pvt* dt = Identity_cast((struct Ducttape_pvt*) tf->ducttape);
 
     struct Allocator* allocator = MallocAllocator_new(85000);
     uint16_t buffLen = sizeof(struct Ducttape_IncomingForMe) + 8 + strlen(pingBenc);
-    uint8_t* buff = allocator->calloc(buffLen, 1, allocator);
+    uint8_t* buff = Allocator_calloc(allocator, buffLen, 1);
     struct Headers_SwitchHeader* sh = (struct Headers_SwitchHeader*) buff;
     sh->label_be = Endian_hostToBigEndian64(4);
     struct Headers_IP6Header* ip6 = (struct Headers_IP6Header*) &sh[1];
@@ -67,7 +71,7 @@ int main()
     udp->checksum_be = 0;
     struct Message m2 = { .bytes = buff, .length = buffLen, .padding = 0 };
     Ducttape_injectIncomingForMe(&m2, &dt->public, herPublicKey);
-    Assert_always(dt->switchInterface.receiverContext);
+    Assert_always(!dt->switchInterface.receiverContext);
 
     // good checksum
     udp->checksum_be =

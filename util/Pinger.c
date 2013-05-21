@@ -14,8 +14,9 @@
  */
 #include "util/Bits.h"
 #include "util/Pinger.h"
-#include "util/Time.h"
-#include "util/Timeout.h"
+#include "util/events/Time.h"
+#include "util/events/Timeout.h"
+#include "util/Identity.h"
 
 struct Ping
 {
@@ -27,12 +28,13 @@ struct Ping
     uint32_t timeSent;
     Pinger_SEND_PING(sendPing);
     Pinger_ON_RESPONSE(onResponse);
+    Identity
 };
 
 struct Pinger
 {
     struct Ping* pings[Pinger_MAX_CONCURRENT_PINGS];
-    struct event_base* eventBase;
+    struct EventBase* eventBase;
     struct Log* logger;
     struct Allocator* allocator;
 };
@@ -42,7 +44,7 @@ static void callback(String* data, struct Ping* ping)
     uint32_t now = Time_currentTimeMilliseconds(ping->pinger->eventBase);
     ping->onResponse(data, now - ping->timeSent, ping->public.context);
     *(ping->selfPtr) = NULL;
-    ping->public.pingAlloc->free(ping->public.pingAlloc);
+    Allocator_free(ping->public.pingAlloc);
 }
 
 static void timeoutCallback(void* vping)
@@ -50,17 +52,17 @@ static void timeoutCallback(void* vping)
     callback(NULL, (struct Ping*) vping);
 }
 
-static void sendPingCallback(void* vping)
+void Pinger_sendPing(struct Pinger_Ping* ping)
 {
-    struct Ping* ping = vping;
-    ping->sendPing(ping->data, ping->public.context);
+    struct Ping* p = Identity_cast((struct Ping*) ping);
+    p->sendPing(p->data, ping->context);
 }
 
-struct Pinger_Ping* Pinger_ping(String* data,
-                                Pinger_ON_RESPONSE(onResponse),
-                                Pinger_SEND_PING(sendPing),
-                                uint32_t timeoutMilliseconds,
-                                struct Pinger* pinger)
+struct Pinger_Ping* Pinger_newPing(String* data,
+                                   Pinger_ON_RESPONSE(onResponse),
+                                   Pinger_SEND_PING(sendPing),
+                                   uint32_t timeoutMilliseconds,
+                                   struct Pinger* pinger)
 {
     struct Ping** location = NULL;
     uint32_t index;
@@ -75,7 +77,7 @@ struct Pinger_Ping* Pinger_ping(String* data,
         return NULL;
     }
 
-    struct Allocator* alloc = pinger->allocator->child(pinger->allocator);
+    struct Allocator* alloc = Allocator_child(pinger->allocator);
 
     // Prefix the data with the slot number.
     String* toSend = String_newBinary(NULL, ((data) ? data->len : 0) + 4, alloc);
@@ -84,7 +86,7 @@ struct Pinger_Ping* Pinger_ping(String* data,
         Bits_memcpy(toSend->bytes + 4, data->bytes, data->len);
     }
 
-    struct Ping* ping = alloc->clone(sizeof(struct Ping), alloc, &(struct Ping) {
+    struct Ping* ping = Allocator_clone(alloc, (&(struct Ping) {
         .public = {
             .pingAlloc = alloc,
         },
@@ -94,12 +96,11 @@ struct Pinger_Ping* Pinger_ping(String* data,
         .data = toSend,
         .timeSent = Time_currentTimeMilliseconds(pinger->eventBase),
         .onResponse = onResponse
-    });
+    }));
+    Identity_set(ping);
     ping->timeout =
         Timeout_setTimeout(timeoutCallback, ping, timeoutMilliseconds, pinger->eventBase, alloc);
     *location = ping;
-
-    Timeout_setTimeout(sendPingCallback, ping, 0, pinger->eventBase, alloc);
 
     return &ping->public;
 }
@@ -118,11 +119,11 @@ void Pinger_pongReceived(String* data, struct Pinger* pinger)
     }
 }
 
-struct Pinger* Pinger_new(struct event_base* eventBase, struct Log* logger, struct Allocator* alloc)
+struct Pinger* Pinger_new(struct EventBase* eventBase, struct Log* logger, struct Allocator* alloc)
 {
-    return alloc->clone(sizeof(struct Pinger), alloc, &(struct Pinger) {
+    return Allocator_clone(alloc, (&(struct Pinger) {
         .eventBase = eventBase,
         .logger = logger,
         .allocator = alloc
-    });
+    }));
 }

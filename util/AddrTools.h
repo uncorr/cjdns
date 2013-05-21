@@ -18,6 +18,7 @@
 #include "util/Bits.h"
 #include "util/Endian.h"
 #include "util/Hex.h"
+#include "util/platform/Sockaddr.h"
 
 #include <stdint.h>
 
@@ -152,26 +153,71 @@ static inline void AddrTools_printIp(uint8_t output[40], const uint8_t binIp[16]
  */
 static inline int AddrTools_parseIp(uint8_t out[16], const uint8_t hexAddr[40])
 {
-    for (int i = 4; i < 39; i += 5) {
+    struct Sockaddr_storage ss;
+    if (Sockaddr_parse((const char*) hexAddr, &ss)
+        || Sockaddr_getFamily(&ss.addr) != Sockaddr_AF_INET6)
+    {
+        return -1;
+    }
+    uint8_t* addr = NULL;
+    Sockaddr_getAddress(&ss.addr, &addr);
+    Bits_memcpyConst(out, addr, 16);
+    return 0;
+}
+
+/**
+ * Parse out an ethernet MAC address.
+ *
+ * @param out a pointer to a byte array which will be set to the bytes of the MAC address.
+ * @param hexAddr a string representation of an ethernet MAC address such as:
+ *                "00:11:22:33:44:55"
+ * @return 0 if successful, -1 if the hexAddr is malformed.
+ */
+static inline int AddrTools_parseMac(uint8_t out[6], const uint8_t hexAddr[17])
+{
+    for (int i = 2; i < 15; i += 3) {
         if (hexAddr[i] != ':') {
             return -1;
         }
     }
 
-    uint8_t hex[32];
+    uint8_t hex[12];
     int j = 0;
-    for (int i = 0; i < 40; i++) {
-        hex[j++] = hexAddr[i++];
-        hex[j++] = hexAddr[i++];
+    for (int i = 0; i < 18; i++) {
         hex[j++] = hexAddr[i++];
         hex[j++] = hexAddr[i++];
     }
 
-    if (Hex_decode(out, 16, hex, 32) != 16) {
+    if (Hex_decode(out, 6, hex, 12) != 6) {
         return -1;
     }
 
     return 0;
+}
+
+static inline void AddrTools_printMac(uint8_t output[18], const uint8_t binMac[6])
+{
+    uint8_t hex[12];
+    Hex_encode(hex, 12, binMac, 6);
+
+    output[ 0] = hex[ 0];
+    output[ 1] = hex[ 1];
+    output[ 2] = ':';
+    output[ 3] = hex[ 2];
+    output[ 4] = hex[ 3];
+    output[ 5] = ':';
+    output[ 6] = hex[ 4];
+    output[ 7] = hex[ 5];
+    output[ 8] = ':';
+    output[ 9] = hex[ 6];
+    output[10] = hex[ 7];
+    output[11] = ':';
+    output[12] = hex[ 8];
+    output[13] = hex[ 9];
+    output[14] = ':';
+    output[15] = hex[10];
+    output[16] = hex[11];
+    output[17] = '\0';
 }
 
 #endif

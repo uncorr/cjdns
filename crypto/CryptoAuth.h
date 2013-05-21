@@ -16,14 +16,15 @@
 #define CryptoAuth_H
 
 #include "benc/Object.h"
+#include "crypto/random/Random.h"
 #include "interface/Interface.h"
 #include "memory/Allocator.h"
 #include "util/Endian.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
+#include "util/events/EventBase.h"
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <event2/event.h>
 
 #define CryptoAuth_DEFAULT_RESET_AFTER_INACTIVITY_SECONDS 60
 
@@ -52,11 +53,12 @@ struct CryptoAuth_Wrapper;
  *                 based authentication.
  * @param user The thing to associate with this user, will be returned by CryptoAuth_getUser().
  *             If this is NULL and requireAuthentication is enabled, authentication will fail.
+ *             Duplicate user entires are OK.
  * @param context The CryptoAuth context.
  * @return 0 if all goes well,
  *         CryptoAuth_addUser_INVALID_AUTHTYPE if the authentication method is not supported,
  *         CryptoAuth_addUser_OUT_OF_SPACE if there is not enough space to store the entry,
- *         CryptoAuth_addUser_DUPLICATE if the entry already exists.
+ *         CryptoAuth_addUser_DUPLICATE if the same *password* already exists.
  */
 #define CryptoAuth_addUser_INVALID_AUTHTYPE  -1
 #define CryptoAuth_addUser_OUT_OF_SPACE      -2
@@ -70,8 +72,10 @@ int32_t CryptoAuth_addUser(String* password,
  * Remove all users registered with this CryptoAuth.
  *
  * @param context the context to remove users for.
+ * @param user the identifier which was passed to addUser(), all users with this id will be removed.
+ * @return the number of users removed.
  */
-void CryptoAuth_flushUsers(struct CryptoAuth* context);
+int CryptoAuth_removeUsers(struct CryptoAuth* context, void* user);
 
 /**
  * Get the user object associated with the authenticated session or NULL if there is none.
@@ -92,12 +96,14 @@ void* CryptoAuth_getUser(struct Interface* iface);
  * @param eventBase the libevent context for handling timeouts.
  * @param logger the mechanism for logging output from the CryptoAuth.
  *               if NULL then no logging will be done.
+ * @param rand random number generator.
  * @return a new CryptoAuth context.
  */
 struct CryptoAuth* CryptoAuth_new(struct Allocator* allocator,
                                   const uint8_t* privateKey,
-                                  struct event_base* eventBase,
-                                  struct Log* logger);
+                                  struct EventBase* eventBase,
+                                  struct Log* logger,
+                                  struct Random* rand);
 
 /**
  * Wrap an interface with crypto authentication.
@@ -147,8 +153,11 @@ void CryptoAuth_reset(struct Interface* iface);
 /** Received a hello message, sent a key message, waiting for the session to complete. */
 #define CryptoAuth_HANDSHAKE2  2
 
+/** Sent a hello message and received a key message but have not gotten a data message yet. */
+#define CryptoAuth_HANDSHAKE3  3
+
 /** The CryptoAuth session has successfully done a handshake and received at least one message. */
-#define CryptoAuth_ESTABLISHED 3
+#define CryptoAuth_ESTABLISHED 4
 
 /**
  * Get the state of the CryptoAuth session.
@@ -160,5 +169,16 @@ void CryptoAuth_reset(struct Interface* iface);
  *                CryptoAuth_ESTABLISHED
  */
 int CryptoAuth_getState(struct Interface* iface);
+
+/**
+ * Get the interface on the other side of this CryptoAuth session.
+ *
+ * Given a wrapped interface, get the wrapping interface.
+ * given a wrapping interface, get the one which is wrapped.
+ *
+ * @param iface the wrapped or wrapper iface.
+ * @return the opposite.
+ */
+struct Interface* CryptoAuth_getConnectedInterface(struct Interface* iface);
 
 #endif

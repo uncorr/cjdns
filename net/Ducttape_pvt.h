@@ -16,16 +16,23 @@
 #define Ducttape_pvt_H
 
 #include "dht/Address.h"
-#include "dht/AddressMapper.h"
+#include "util/version/Version.h"
 #include "dht/DHTModule.h"
 #include "dht/DHTModuleRegistry.h"
 #include "dht/dhtcore/RouterModule.h"
 #include "interface/Interface.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
 #include "net/Ducttape.h"
+#include "util/events/EventBase.h"
+#include "util/Identity.h"
 
 #include <stdint.h>
-#include <event2/event.h>
+
+enum Ducttape_SessionLayer {
+    Ducttape_SessionLayer_INVALID = 0,
+    Ducttape_SessionLayer_INNER,
+    Ducttape_SessionLayer_OUTER
+};
 
 /**
  * A network module which connects the DHT router to the SwitchCore.
@@ -35,7 +42,7 @@
  * and send the message toward the DHT core.
  */
 
-struct Ducttape_Private
+struct Ducttape_pvt
 {
     /** the public fields. */
     struct Ducttape public;
@@ -60,9 +67,7 @@ struct Ducttape_Private
 
     struct SessionManager* sm;
 
-    struct AddressMapper addrMap;
-
-    struct event_base* eventBase;
+    struct EventBase* eventBase;
 
     struct Log* logger;
 
@@ -75,22 +80,44 @@ struct Ducttape_Private
     struct Headers_IP6Header* ip6Header;
 
     /**
-     * NULL unless this is router-to-router traffic.
-     * router-to-router traffic MUST NOT be forwarded, therefor it must be sent to the switch.
+     * If not NULL, we know which node we want to forward the message to so an extra lookup
+     * can be avoided.
      */
-    struct Address* forwardTo;
+    struct Node* forwardTo;
 
-    /** The last crypto session, used for getting the public key of the other party. */
-    struct Interface* session;
+    /** The current session, used for getting the key, ipv6, and version of the other party. */
+    struct SessionManager_Session* session;
 
-    /** whether we are encrypting/decrypting the inner layer or the outer layer. */
-    int layer;
+    /** Number of milliseconds to wait between searches for a node to send arbitrary data to. */
+    uint32_t timeBetweenSearches;
 
-    /** The IPv6 address of the router from which the packet we are handling was sent. */
-    uint8_t* routerAddress;
+    /** Absolute time of last search for node to send arbitrary data to. */
+    uint64_t timeOfLastSearch;
 
     /** The interface for the SwitchPinger. */
     struct Interface* switchPingerIf;
+
+    /**
+     * This is to tell the code whether it is in the outer later of encryption or the inner layer.
+     */
+    enum Ducttape_SessionLayer layer;
+
+    /** For tunneling IPv4 and ICANN IPv6 packets. */
+    struct IpTunnel* ipTunnel;
+
+    struct Allocator* alloc;
+
+    /** True if the message being handled currently is a layer 3 CryptoAuth init message. */
+    bool initMessage;
+
+    /**
+     * Cache the session handle and version so that if an incoming (stray) packet fails to
+     * authenticate it won't assasinate the session.
+     */
+    uint32_t currentSessionSendHandle_be;
+    uint32_t currentSessionVersion;
+
+    Identity
 };
 
 #endif

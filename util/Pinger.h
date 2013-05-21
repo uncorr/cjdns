@@ -17,9 +17,9 @@
 
 #include "benc/String.h"
 #include "memory/Allocator.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
 
-#include <event2/event.h>
+#include "util/events/EventBase.h"
 
 #define Pinger_MAX_CONCURRENT_PINGS 256
 
@@ -72,11 +72,20 @@ struct Pinger_Ping
  * @param pinger
  * @return a new Pinger_Ping if all goes well, NULL if there is no space.
  */
-struct Pinger_Ping* Pinger_ping(String* data,
-                                Pinger_ON_RESPONSE(onResponse),
-                                Pinger_SEND_PING(sendPing),
-                                uint32_t timeoutMilliseconds,
-                                struct Pinger* pinger);
+struct Pinger_Ping* Pinger_newPing(String* data,
+                                   Pinger_ON_RESPONSE(onResponse),
+                                   Pinger_SEND_PING(sendPing),
+                                   uint32_t timeoutMilliseconds,
+                                   struct Pinger* pinger);
+
+/**
+ * Once the ping has been allocated, send it.
+ * This is split into two functions so they caller can allocate a structure using thie ping's
+ * allocator and guarantee that the structure will be cleaned up after the ping is complete.
+ *
+ * @param ping the ping to send.
+ */
+void Pinger_sendPing(struct Pinger_Ping* ping);
 
 /**
  * Function to call when data comes in which appears to be a ping response.
@@ -93,7 +102,7 @@ void Pinger_pongReceived(String* data, struct Pinger* pinger);
  * @param logger
  * @param alloc
  */
-struct Pinger* Pinger_new(struct event_base* eventBase,
+struct Pinger* Pinger_new(struct EventBase* eventBase,
                           struct Log* logger,
                           struct Allocator* alloc);
 

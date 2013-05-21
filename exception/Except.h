@@ -18,9 +18,6 @@
 #include "util/Gcc.h"
 
 #include <stdarg.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 #define Except_BUFFER_SZ 1024
 
@@ -33,14 +30,6 @@ struct Except
 
 Gcc_NORETURN
 Gcc_PRINTF(3, 4)
-static inline void Except_raise(struct Except* eh, int code, char* format, ...)
-{
-    va_list args;
-    va_start(args, format);
-    vsnprintf(eh->message, Except_BUFFER_SZ, format, args);
-
-    eh->exception(eh->message, code, eh);
-    abort();
-}
+void Except_raise(struct Except* eh, int code, char* format, ...);
 
 #endif

@@ -25,25 +25,33 @@
 struct Message
 {
     /** The length of the message. */
-    uint16_t length;
+    int32_t length;
 
     /** The number of bytes of padding BEFORE where bytes begins. */
-    uint16_t padding;
+    int32_t padding;
 
     /** The content. */
     uint8_t* bytes;
 };
 
+#define Message_STACK(name, messageLength, amountOfPadding) \
+    uint8_t UniqueName_get()[messageLength + amountOfPadding]; \
+    name = &(struct Message){                                  \
+        .length = messageLength,                               \
+        .bytes = UniqueName_get() + amountOfPadding,           \
+        .padding = amountOfPadding                             \
+    }
+
 static inline struct Message* Message_clone(struct Message* toClone,
                                             struct Allocator* allocator)
 {
-    uint8_t* allocation = allocator->malloc(toClone->length + toClone->padding, allocator);
+    uint8_t* allocation = Allocator_malloc(allocator, toClone->length + toClone->padding);
     Bits_memcpy(allocation, toClone->bytes - toClone->padding, toClone->length + toClone->padding);
-    return allocator->clone(sizeof(struct Message), allocator, &(struct Message) {
+    return Allocator_clone(allocator, (&(struct Message) {
         .length = toClone->length,
         .padding = toClone->padding,
         .bytes = allocation + toClone->padding
-    });
+    }));
 }
 
 static inline void Message_copyOver(struct Message* output,
@@ -54,7 +62,7 @@ static inline void Message_copyOver(struct Message* output,
     size_t outTotalLength = output->length + output->padding;
     uint8_t* allocation = output->bytes - output->padding;
     if (inTotalLength > outTotalLength) {
-        allocation = allocator->realloc(allocation, inTotalLength, allocator);
+        allocation = Allocator_realloc(allocator, allocation, inTotalLength);
     }
     Bits_memcpy(allocation, input->bytes - input->padding, inTotalLength);
     output->bytes = allocation + input->padding;
@@ -68,18 +76,33 @@ static inline void Message_copyOver(struct Message* output,
  */
 static inline bool Message_shift(struct Message* toShift, int32_t amount)
 {
-    Assert_true(toShift->padding >= amount);
-    Assert_true((amount >= 0) ? (((int32_t)UINT16_MAX) - toShift->length >= amount)
-                              : (((int32_t)toShift->length) >= -amount));
-    Assert_true(toShift->length < 60000);
+    if (amount > 0) {
+        Assert_true(toShift->padding >= amount);
+    } else {
+        Assert_true(toShift->length >= (-amount));
+    }
 
     toShift->length += amount;
     toShift->bytes -= amount;
     toShift->padding -= amount;
 
-    Assert_true(toShift->length < 60000);
-
     return true;
+}
+
+static inline void Message_push(struct Message* restrict msg,
+                                const void* restrict object,
+                                size_t size)
+{
+    Message_shift(msg, (int)size);
+    Bits_memcpy(msg->bytes, object, size);
+}
+
+static inline void Message_pop(struct Message* restrict msg,
+                               void* restrict object,
+                               size_t size)
+{
+    Bits_memcpy(object, msg->bytes, size);
+    Message_shift(msg, -((int)size));
 }
 
 #endif

@@ -18,19 +18,22 @@
 #include "admin/Admin.h"
 #include "admin/AdminClient.h"
 #include "memory/Allocator.h"
-#include "util/Log.h"
+#include "util/log/Log.h"
+#include "util/platform/Sockaddr.h"
 
-#include <event2/event.h>
+#include "util/events/EventBase.h"
 
 struct AdminTestFramework
 {
     struct Admin* admin;
     struct AdminClient* client;
     struct Allocator* alloc;
-    struct event_base* eventBase;
+    struct EventBase* eventBase;
     struct Log* logger;
+    struct Sockaddr* addr;
+    struct Interface* angelInterface;
 };
 
-struct AdminTestFramework* AdminTestFramework_setUp();
-
+struct AdminTestFramework* AdminTestFramework_setUp(int argc, char** argv);
+void AdminTestFramework_tearDown(struct AdminTestFramework* framework);
 #endif

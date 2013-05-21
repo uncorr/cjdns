@@ -10,8 +10,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 project(cjdns C)
-cmake_minimum_required(VERSION 2.4)
-
+cmake_minimum_required(VERSION 2.8)
 message(${CMAKE_VERSION})
 
 if(CMAKE_BINARY_DIR STREQUAL ${CMAKE_SOURCE_DIR} AND NOT OPENWRT)
@@ -22,7 +21,10 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
     ${CMAKE_SOURCE_DIR}/cmake/modules)
 
 # validation
-add_definitions(-Wall -Wextra -std=c99 -Werror -pedantic)
+add_definitions(-Wall -Wextra -std=c99 -pedantic)
+if ("$ENV{NO_WERROR}" STREQUAL "")
+    add_definitions(-Werror)
+endif()
 
 if(WIN32)
     # ISO C does not support the ‘I64’ ms_printf length modifier
@@ -31,18 +33,42 @@ if(WIN32)
 
     # proceed with ifdef hell :(
     add_definitions(-DWIN32)
-    set(PLATFORM_LIBRARIES
-        ws2_32
-    )
 
     # BufferAllocator.c:1:0: error: -fPIC ignored for target (all code is position independent)
     set(WITH_PIE OFF CACHE INTERNAL "" FORCE)
 endif()
+if(CMAKE_CROSSCOMPILING)
+    if (NOT "$ENV{REMOTE_TEST_IP_PORT}" STREQUAL "")
+        set(REMOTE_TEST_IP_PORT "$ENV{REMOTE_TEST_IP_PORT}")
+    endif()
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL SunOS)
     set(ILLUMOS TRUE)
+    set(SYSTEM Illumos)
 elseif(CMAKE_SYSTEM_NAME STREQUAL Linux)
     set(LINUX TRUE)
+    set(SYSTEM Linux)
+elseif(CMAKE_SYSTEM_NAME STREQUAL Darwin)
+    set(APPLE TRUE)
+    set(SYSTEM OSX)
+elseif(CMAKE_SYSTEM_NAME STREQUAL FreeBSD)
+    set(FREEBSD TRUE)
+    add_definitions(-D BSD=1)
+    set(SYSTEM FreeBSD)
+elseif(CMAKE_SYSTEM_NAME STREQUAL OpenBSD)
+    set(OPENBSD TRUE)
+    add_definitions(-D BSD=1)
+    set(SYSTEM OpenBSD)
+elseif(CMAKE_SYSTEM_NAME STREQUAL Windows)
+    set(WINDOWS TRUE)
+    set(SYSTEM W32)
+endif()
+add_definitions(-D ${SYSTEM}=1)
+
+if(EXISTS ${CMAKE_SOURCE_DIR}/interface/ETHInterface_${SYSTEM}.c)
+  add_definitions(-D HAS_ETH_INTERFACE=1)
+  set(HAS_ETH_INTERFACE TRUE)
 endif()
 
 if(CMAKE_C_COMPILER MATCHES "(.*)-gcc")
@@ -128,19 +154,22 @@ if(WITH_PIE)
 else()
     message("Building a position dependent executable (ASLR security disabled).")
     set(PIE "")
+endif()
 
-    # debugging
+if ("$ENV{NO_DEBUG}" STREQUAL "")
     add_definitions(-g)
 endif()
 
-if(NOT DEFINED APPLE AND NOT WIN32 AND NOT ILLUMOS)
-    set(CMAKE_EXE_LINKER_FLAGS "${PIE} -Wl,-z,relro,-z,now,-z,noexecstack")
+if(WIN32)
+    set(CMAKE_EXE_LINKER_FLAGS "${PIE}")
 elseif(ILLUMOS)
     # TODO make this less ugly
     set(CMAKE_EXE_LINKER_FLAGS "${PIE} -lsocket")
-else()
+else(APPLE)
     # apple seems to set noexecstack by default and not support relro.
     set(CMAKE_EXE_LINKER_FLAGS "${PIE}")
+else()
+    set(CMAKE_EXE_LINKER_FLAGS "${PIE} -Wl,-z,relro,-z,now,-z,noexecstack")
 endif()
 
 # logging
@@ -154,14 +183,14 @@ endif (${Log_LEVEL} STREQUAL "KEYS")
 add_definitions("-D Log_${Log_LEVEL}")
 
 # vrooooooom
-add_definitions(-funroll-loops)
+add_definitions(-O2)
 
-IF(NOT CMAKE_BUILD_TYPE)
+#IF(NOT CMAKE_BUILD_TYPE)
 # default to RelWithDebInfo (-g -O2)
-    SET(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
-        "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
-        FORCE)
-ENDIF(NOT CMAKE_BUILD_TYPE)
+#    SET(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
+#        "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
+#        FORCE)
+#ENDIF(NOT CMAKE_BUILD_TYPE)
 
 OPTION(WITH_LTO "Building with link time optimization.")
 if(WITH_LTO)
@@ -174,27 +203,15 @@ endif()
 SET(CJDNS_MAX_PEERS 256 CACHE STRING "maximum number of peers")
 add_definitions("-D CJDNS_MAX_PEERS=${CJDNS_MAX_PEERS}")
 
+# make sure casts are done properly.
+add_definitions("-D Identity_CHECK=1")
 
-if(NOT "$ENV{GIT_VERSION}" STREQUAL "")
-    SET(GIT_VERSION "$ENV{GIT_VERSION}")
-elseif(EXISTS .git_commit)
-    FILE(READ .git_commit GIT_VERSION)
-else()
-    find_package(Git)
-    execute_process(
-        COMMAND ${GIT_EXECUTABLE} log -n 1
-        OUTPUT_VARIABLE GIT_LOG
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    string(REGEX MATCH "[0-9a-f]*\n" GIT_VERSION "${GIT_LOG}")
-    string(REPLACE "\n" "" GIT_VERSION "${GIT_VERSION}")
-endif()
-# GIT_VERSION is used in dht/dhtcore/CMakeLists.txt
+# add in a billion checks which slow things down but catch bugs.
+add_definitions("-D PARANOIA=1")
 
 include_directories(${CMAKE_SOURCE_DIR})
 
-find_package(Libevent2 REQUIRED)
-include_directories(${LIBEVENT2_INCLUDE_DIRS})
+find_package(Libuv REQUIRED)
 
 find_package(NACL REQUIRED)
 include_directories(${NACL_INCLUDE_DIRS})
@@ -209,25 +226,45 @@ add_subdirectory(memory)
 add_subdirectory(util)
 add_subdirectory(switch)
 add_subdirectory(net)
+add_subdirectory(exception)
+add_subdirectory(tunnel)
 
-add_executable(cjdroute cjdroute.c)
-target_link_libraries(cjdroute
-    crypto
-    crypto_benchmark
-    interface
-    switch
-    dht
-    dhtcore
-    cjdbenc
+add_executable(cleanconfig
+    cleanconfig.c
+)
+target_link_libraries(cleanconfig
     cjdbenc_JsonBencSerializer
+    cjdbenc
     cjdmemory
-    cjdadmin
-    cjdnet
-    ${LIBEVENT2_LIBRARIES}
-    ${PLATFORM_LIBRARIES}
+    cjdio
+)
+add_executable(benc2json
+    benc2json.c
+)
+target_link_libraries(benc2json
+    cjdbenc_StandardBencSerializer
+    cjdbenc_JsonBencSerializer
+    cjdbenc
+    cjdmemory
+    cjdio
+)
+add_executable(privatetopublic
+    privatetopublic.c
+)
+target_link_libraries(privatetopublic
+    util
+    crypto
+)
+add_executable(publictoip6
+    publictoip6.c
+)
+target_link_libraries(publictoip6
+    util
+    cjdns-crypto-key
 )
 
-INSTALL(TARGETS cjdroute RUNTIME DESTINATION bin)
+
+#INSTALL(TARGETS cjdroute RUNTIME DESTINATION bin)
 
 OPTION(NO_CODESYTLE "No codestyle checks")
 

@@ -17,12 +17,12 @@
 
 #include "admin/Admin.h"
 #include "memory/Allocator.h"
-#include "net/InterfaceController.h"
-#include "util/Log.h"
+#include "interface/InterfaceController.h"
+#include "util/log/Log.h"
 
-#include <event2/event.h>
+#include "util/events/EventBase.h"
 
-void UDPInterface_admin_register(struct event_base* base,
+void UDPInterface_admin_register(struct EventBase* base,
                                  struct Allocator* allocator,
                                  struct Log* logger,
                                  struct Admin* admin,
