@@ -16,7 +16,9 @@
 #define string_strrchr
 #define string_strlen
 #include "admin/Admin.h"
-#include "admin/angel/Waiter.h"
+#include "admin/angel/InterfaceWaiter.h"
+#include "admin/angel/AngelInit.h"
+#include "admin/angel/Core.h"
 #include "admin/AuthorizedPasswords.h"
 #include "admin/Configurator.h"
 #include "benc/Int.h"
@@ -28,8 +30,6 @@
 #include "dht/dhtcore/RouterModule_admin.h"
 #include "exception/Except.h"
 #include "interface/Interface.h"
-#include "interface/TUNInterface.h"
-#include "interface/TUNConfigurator.h"
 #include "interface/UDPInterface_admin.h"
 #include "io/Reader.h"
 #include "io/ArrayReader.h"
@@ -50,12 +50,11 @@
 #include "switch/SwitchCore.h"
 #include "util/platform/libc/string.h"
 #include "util/events/EventBase.h"
+#include "util/events/Pipe.h"
+#include "util/events/Process.h"
 #include "util/Assert.h"
 #include "util/Base32.h"
-#include "util/Errno.h"
 #include "util/Hex.h"
-#include "util/Pipe.h"
-#include "util/Process.h"
 #include "util/Security.h"
 #include "util/log/WriterLog.h"
 #include "util/version/Version.h"
@@ -87,32 +86,6 @@ static int genAddress(uint8_t addressOut[40],
             return 0;
         }
     }
-}
-
-static bool fileExists(const char* filename)
-{
-    FILE* file;
-    if ((file = fopen(filename, "r")) != NULL) {
-        fclose(file);
-        return true;
-    }
-    return false;
-}
-
-static String* getCorePath(struct Allocator* alloc)
-{
-    struct Allocator* alloc2 = Allocator_child(alloc);
-    char* cjdroute2Path = Process_getPath(alloc2);
-    char* lastSlash = strrchr(cjdroute2Path, '/');
-    Assert_always(lastSlash != NULL);
-    *lastSlash = '\0';
-    String* tempOutput = String_printf(alloc2, "%s/cjdns", cjdroute2Path);
-    String* output = NULL;
-    if (fileExists(tempOutput->bytes)) {
-        output = String_clone(tempOutput, alloc);
-    }
-    Allocator_free(alloc2);
-    return output;
 }
 
 static int genconf(struct Random* rand)
@@ -309,10 +282,6 @@ static int genconf(struct Random* rand)
            "    // to make them more forgiving in the event that they become desynchronized.\n"
            "    \"resetAfterInactivitySeconds\": 100,\n"
            "\n"
-           "    // Save the pid of the running process to this file.\n"
-           "    // If this file cannot be opened for writing, the router will not start.\n"
-           "    //\"pidFile\": \"cjdroute.pid\",\n"
-           "\n"
            "    // Dropping permissions.\n"
            "    \"security\":\n"
            "    [\n"
@@ -341,7 +310,11 @@ static int genconf(struct Random* rand)
            "        // Uncomment to have cjdns log to stdout rather than making logs available\n"
            "        // via the admin socket.\n"
            "        // \"logTo\":\"stdout\"\n"
-           "    }\n"
+           "    },\n"
+           "\n"
+           "    // If set to non-zero, cjdns will not fork to the background.\n"
+           "    // Recommended for use in conjunction with \"logTo\":\"stdout\".\n"
+           "    \"noBackground\":0\n"
            "}\n");
 
     return 0;
@@ -349,7 +322,7 @@ static int genconf(struct Random* rand)
 
 static int usage(char* appName)
 {
-    printf("Usage: %s [--help] [--genconf] [--bench] [--version]\n"
+    printf("Usage: %s [--help] [--genconf] [--bench] [--version] [--cleanconf]\n"
            "\n"
            "To get the router up and running.\n"
            "Step 1:\n"
@@ -387,6 +360,14 @@ int main(int argc, char** argv)
         fprintf(stderr, "Log_LEVEL = KEYS, EXPECT TO SEE PRIVATE KEYS IN YOUR LOGS!\n");
     #endif
 
+    if (isatty(STDIN_FILENO) || argc < 2) {
+        // Fall through.
+    } else if (!strcmp("angel", argv[1])) {
+        return AngelInit_main(argc, argv);
+    } else if (!strcmp("core", argv[1])) {
+        return Core_main(argc, argv);
+    }
+
     Assert_true(argc > 0);
     struct Except* eh = NULL;
 
@@ -402,7 +383,8 @@ int main(int argc, char** argv)
         } else if (strcmp(argv[1], "--genconf") == 0) {
             return genconf(rand);
         } else if (strcmp(argv[1], "--pidfile") == 0) {
-            // Performed after reading the configuration
+            // deprecated
+            return 0;
         } else if (strcmp(argv[1], "--reconf") == 0) {
             // Performed after reading the configuration
         } else if (strcmp(argv[1], "--bench") == 0) {
@@ -410,6 +392,8 @@ int main(int argc, char** argv)
         } else if (strcmp(argv[1], "--version") == 0) {
             printf("Cjdns Git Version ID: %s\n", Version_gitVersion());
             return 0;
+        } else if (strcmp(argv[1], "--cleanconf") == 0) {
+            // Performed after reading configuration
         } else {
             fprintf(stderr, "%s: unrecognized option '%s'\n", argv[0], argv[1]);
             fprintf(stderr, "Try `%s --help' for more information.\n", argv[0]);
@@ -439,26 +423,31 @@ int main(int argc, char** argv)
         return -1;
     }
 
+    if (argc == 2 && strcmp(argv[1], "--cleanconf") == 0) {
+        struct Writer* stdoutWriter = FileWriter_new(stdout, allocator);
+        JsonBencSerializer_get()->serializeDictionary(stdoutWriter, &config);
+        printf("\n");
+        return 0;
+    }
+
     struct Writer* logWriter = FileWriter_new(stdout, allocator);
     struct Log* logger = WriterLog_new(logWriter, allocator);
 
     // --------------------- Setup Pipes to Angel --------------------- //
-    int pipeToAngel[2];
-    int pipeFromAngel[2];
-    if (Pipe_createUniPipe(pipeToAngel) || Pipe_createUniPipe(pipeFromAngel)) {
-        Except_raise(eh, -1, "Failed to create pipes to angel [%s]", Errno_getString());
-    }
+    char angelPipeName[64] = "client-angel-";
+    Random_base32(rand, (uint8_t*)angelPipeName+13, 31);
+    Assert_true(EventBase_eventCount(eventBase) == 0);
+    struct Pipe* angelPipe = Pipe_named(angelPipeName, eventBase, eh, allocator);
+    Assert_true(EventBase_eventCount(eventBase) == 2);
+    angelPipe->logger = logger;
 
-    char pipeToAngelStr[8];
-    snprintf(pipeToAngelStr, 8, "%d", pipeToAngel[0]);
-    char pipeFromAngelStr[8];
-    snprintf(pipeFromAngelStr, 8, "%d", pipeFromAngel[1]);
-    char* args[] = { "angel", pipeToAngelStr, pipeFromAngelStr, NULL };
+    char* args[] = { "angel", angelPipeName, NULL };
 
     // --------------------- Spawn Angel --------------------- //
     String* privateKey = Dict_getString(&config, String_CONST("privateKey"));
 
-    String* corePath = getCorePath(allocator);
+    char* corePath = Process_getPath(allocator);
+
     if (!corePath) {
         Except_raise(eh, -1, "Can't find a usable cjdns core executable, "
                              "make sure it is in the same directory as cjdroute");
@@ -468,7 +457,7 @@ int main(int argc, char** argv)
         Except_raise(eh, -1, "Need to specify privateKey.");
     }
     Log_info(logger, "Forking angel to background.");
-    Process_spawn(corePath->bytes, args);
+    Process_spawn(corePath, args, eventBase, allocator);
 
     // --------------------- Get Admin  --------------------- //
     Dict* configAdmin = Dict_getDict(&config, String_CONST("admin"));
@@ -501,7 +490,7 @@ int main(int argc, char** argv)
     Dict* preConf = Dict_new(allocator);
     Dict* adminPreConf = Dict_new(allocator);
     Dict_putDict(preConf, String_CONST("admin"), adminPreConf, allocator);
-    Dict_putString(adminPreConf, String_CONST("core"), corePath, allocator);
+    Dict_putString(adminPreConf, String_CONST("core"), String_new(corePath, allocator), allocator);
     Dict_putString(preConf, String_CONST("privateKey"), privateKey, allocator);
     Dict_putString(adminPreConf, String_CONST("bind"), adminBind, allocator);
     Dict_putString(adminPreConf, String_CONST("pass"), adminPass, allocator);
@@ -519,14 +508,22 @@ int main(int argc, char** argv)
     if (StandardBencSerializer_get()->serializeDictionary(toAngelWriter, preConf)) {
         Except_raise(eh, -1, "Failed to serialize pre-configuration");
     }
-    write(pipeToAngel[1], buff, toAngelWriter->bytesWritten(toAngelWriter));
+    struct Message* toAngelMsg = &(struct Message) {
+        .bytes = buff,
+        .length = toAngelWriter->bytesWritten
+    };
+    toAngelMsg = Message_clone(toAngelMsg, allocator);
+    Interface_sendMessage(&angelPipe->iface, toAngelMsg);
+
     Log_keys(logger, "Sent [%s] to angel process.", buff);
 
     // --------------------- Get Response from Angel --------------------- //
 
-    uint32_t amount = Waiter_getData(buff, CONFIG_BUFF_SIZE, pipeFromAngel[0], eventBase, eh);
+    struct Message* fromAngelMsg =
+        InterfaceWaiter_waitForData(&angelPipe->iface, eventBase, allocator, eh);
     Dict responseFromAngel;
-    struct Reader* responseFromAngelReader = ArrayReader_new(buff, amount, allocator);
+    struct Reader* responseFromAngelReader =
+        ArrayReader_new(fromAngelMsg->bytes, fromAngelMsg->length, allocator);
     if (StandardBencSerializer_get()->parseDictionary(responseFromAngelReader,
                                                       allocator,
                                                       &responseFromAngel))
@@ -547,8 +544,8 @@ int main(int argc, char** argv)
                      adminBind->bytes);
     }
 
-    // sanity check
-    Assert_true(EventBase_eventCount(eventBase) == 0);
+    // sanity check, Pipe_named() creates 2 events, see above.
+    Assert_true(EventBase_eventCount(eventBase) == 2);
 
     // --------------------- Configuration ------------------------- //
     Configurator_config(&config,
@@ -558,5 +555,13 @@ int main(int argc, char** argv)
                         logger,
                         allocator);
 
+    // --------------------- noBackground ------------------------ //
+
+    int64_t* noBackground = Dict_getInt(&config, String_CONST("noBackground"));
+    if (noBackground && *noBackground) {
+        EventBase_beginLoop(eventBase);
+    }
+
+    //Allocator_free(allocator);
     return 0;
 }

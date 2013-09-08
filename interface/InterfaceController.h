@@ -37,6 +37,32 @@ enum InterfaceController_PeerState
     InterfaceController_PeerState_UNRESPONSIVE
 };
 
+static inline char* InterfaceController_stateString(enum InterfaceController_PeerState ps)
+{
+    switch (ps) {
+        case InterfaceController_PeerState_UNAUTHENTICATED: return "UNAUTHENTICATED";
+        case InterfaceController_PeerState_HANDSHAKE: return "HANDSHAKE";
+        case InterfaceController_PeerState_ESTABLISHED: return "ESTABLISHED";
+        case InterfaceController_PeerState_UNRESPONSIVE: return "UNRESPONSIVE";
+        default: return "INVALID";
+    }
+}
+
+/**
+ * Stats about a peer
+ */
+struct InterfaceController_peerStats
+{
+    uint8_t* pubKey;
+    int state;
+    uint64_t timeOfLastMessage;
+    uint64_t bytesOut;
+    uint64_t bytesIn;
+    uint64_t switchLabel;
+    bool isIncomingConnection;
+    String* user;
+};
+
 struct InterfaceController
 {
     /**
@@ -81,6 +107,18 @@ struct InterfaceController
                                struct Interface* iface);
 
     /**
+     * Disconnect a previously registered peer.
+     *
+     * @param ic the if controller
+     * @param herPublicKey the public key of the foreign node
+     * @retrun 0 if all goes well.
+     *         InterfaceController_disconnectPeer_NOTFOUND if no peer with herPublicKey is found.
+     */
+    #define InterfaceController_disconnectPeer_NOTFOUND -1
+    int (* const disconnectPeer)(struct InterfaceController* ic,
+                             uint8_t herPublicKey[32]);
+
+    /**
      * Populate an empty beacon with password, public key, and version.
      * Each startup, a password is generated consisting of Headers_Beacon_PASSWORD_LEN bytes.
      * If beaconing is enabled for an interface, this password is sent out in each beacon message
@@ -95,6 +133,19 @@ struct InterfaceController
 
     /** Get the current state of a registered interface. */
     enum InterfaceController_PeerState (* const getPeerState)(struct Interface* iface);
+
+    /**
+     * Get stats for the connected peers.
+     *
+     * @params ic the if controller
+     * @params alloc the Allocator to use for the peerStats array in statsOut
+     * @params statsOut pointer to the InterfaceController_peerStats array
+     * @return the number of InterfaceController_peerStats in statsOut
+     */
+    int (* const getPeerStats)(struct InterfaceController* ic,
+                               struct Allocator* alloc,
+                               struct InterfaceController_peerStats** statsOut);
+
 };
 
 #define InterfaceController_getPeerState(ic, iface) \

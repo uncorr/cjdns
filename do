@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # You may redistribute this program and/or modify it under the terms of
 # the GNU General Public License as published by the Free Software Foundation,
 # either version 3 of the License, or (at your option) any later version.
@@ -11,8 +11,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-CMAKE_DOWNLOAD=http://www.cmake.org/files/v2.8/cmake-2.8.8.tar.gz
-CMAKE_SHA256=2b59897864d6220ff20aa8eac64cac8994e004898a1c0f899c8cb4d7b7570b46
+CMAKE_DOWNLOAD=http://www.cmake.org/files/v2.8/cmake-2.8.11.2.tar.gz
+CMAKE_SHA256=b32acb483afdd14339941c6e4ec25f633d916a7a472653a0b00838771a6c0562
 
 [ `dirname $0` ] && cd `dirname $0`
 
@@ -47,14 +47,14 @@ while true; do
     cd cmake-build
 
     APP=`which wget || which curl || echo 'none'`
-    [[ "$APP" == 'none' ]] && echo 'Need wget curl' && exit -1;
-    [[ "$APP" == `which wget` ]] && $APP ${CMAKE_DOWNLOAD}
-    [[ "$APP" == `which curl` ]] && $APP ${CMAKE_DOWNLOAD} > cmake.tar.gz
+    [ "$APP" = 'none' ] && echo 'Need wget curl' && exit 1;
+    [ "x$APP" = x`which wget` ] && $APP ${CMAKE_DOWNLOAD}
+    [ "x$APP" = x`which curl` ] && $APP ${CMAKE_DOWNLOAD} > cmake.tar.gz
 
-    ${SHA256SUM} ./*.tar.gz | grep ${CMAKE_SHA256} || exit -1
-    tar -xf *.tar.gz
+    ${SHA256SUM} ./*.tar.gz | grep ${CMAKE_SHA256} || exit 1
+    tar -xzf *.tar.gz
     find ./ -mindepth 1 -maxdepth 1 -type d -exec mv {} build \;
-    ./build/configure && make || exit -1
+    ./build/configure && make || exit 1
     CMAKE=`pwd`/bin/cmake
     cd ..
     break
@@ -62,7 +62,7 @@ done
 
 (
     ${CMAKE} .. && make || exit 1;
-    make test || [[ "${FORCE}" != "" ]] || exit 1;
+    make test || [ "${FORCE}" != "" ] || exit 1;
     [ -f admin/angel/cjdroute2 ] && [ -f admin/angel/cjdns ] || exit 1;
     [ ! -f ../cjdroute ] || rm ../cjdroute || exit 1;
     [ ! -f ../cjdns ] || rm ../cjdns || exit 1;

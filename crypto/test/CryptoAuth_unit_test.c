@@ -19,7 +19,6 @@
 #include "io/FileWriter.h"
 #include "memory/BufferAllocator.h"
 #include "memory/MallocAllocator.h"
-#include "memory/CanaryAllocator.h"
 #include "memory/Allocator.h"
 #include "util/platform/libc/string.h"
 #include "util/events/EventBase.h"
@@ -72,13 +71,13 @@ void encryptRndNonceTest()
 
 void createNew()
 {
-    uint8_t buff[BUFFER_SIZE];
-    struct Allocator* allocator = CanaryAllocator_new(BufferAllocator_new(buff, BUFFER_SIZE), NULL);
+    struct Allocator* allocator = MallocAllocator_new(BUFFER_SIZE);
     struct CryptoAuth* ca = CryptoAuth_new(allocator, privateKey, eventBase, NULL, NULL);
     /*for (int i = 0; i < 32; i++) {
         printf("%.2x", ca->publicKey[i]);
     }*/
     Assert_always(Bits_memcmp(ca->publicKey, publicKey, 32) == 0);
+    Allocator_free(allocator);
 }
 
 static uint8_t receiveMessage(struct Message* message, struct Interface* iface)
@@ -104,7 +103,7 @@ struct CryptoAuth_Wrapper* setUp(uint8_t* myPrivateKey,
                       uint8_t* authPassword,
                       struct Message** resultMessage)
 {
-    struct Allocator* allocator = CanaryAllocator_new(MallocAllocator_new(8192*2), NULL);
+    struct Allocator* allocator = MallocAllocator_new(8192*2);
     struct Writer* writer = FileWriter_new(stdout, allocator);
     struct Log* logger = WriterLog_new(writer, allocator);
     struct CryptoAuth* ca = CryptoAuth_new(allocator, myPrivateKey, eventBase, logger, NULL);
@@ -156,17 +155,16 @@ void testHello(uint8_t* password, uint8_t* expectedOutput)
     Assert_always(Hex_encode(actual, 265, outMessage->bytes, outMessage->length) > 0);
     //printf("%s", actual);
     if (Bits_memcmp(actual, expectedOutput, 264)) {
-        printf("Test failed.\n"
-               "Expected %s\n"
-               "     Got %s\n", expectedOutput, actual);
-        abort();
+        Assert_failure("Test failed.\n"
+                       "Expected %s\n"
+                       "     Got %s\n", expectedOutput, actual);
     }
 }
 
 void helloNoAuth()
 {
     uint8_t* expected = (uint8_t*)
-        "0000000000ffffffffffffff7fffffffffffffffffffffffffffffffffffffff"
+        "0000000000ffffffffffffff7fff7fffffffffffffffffffffffffffffffffff"
         "ffffffffffffffff847c0d2c375234f365e660955187a3735a0f7613d1609d3a"
         "6a4d8c53aeaa5a22e6f55c4f45d6906e90ef53d53593d71a4f1af6484ceec3d2"
         "691858481b2fe05d51aaba9a74925c4595fc57ab3287d1fb325a9d0aa238476b"
@@ -178,7 +176,7 @@ void helloNoAuth()
 void helloWithAuth()
 {
     uint8_t* expected = (uint8_t*)
-        "0000000001641c99f7719f570000beb1ffffffffffffffffffffffffffffffff"
+        "0000000001641c99f7719f5700003eb1ffffffffffffffffffffffffffffffff"
         "ffffffffffffffff847c0d2c375234f365e660955187a3735a0f7613d1609d3a"
         "6a4d8c53aeaa5a2289427cd94d2710830662b77ef3b00cd6aab129686fce50e9"
         "823d7db9ff0b37c46a7dcfbb40a43ba7b42fb09dfed7d06fed814ddf977e3d9a"
@@ -220,8 +218,7 @@ void receiveHelloWithNoAuth()
 
 void repeatHello()
 {
-    uint8_t buff[BUFFER_SIZE];
-    struct Allocator* allocator = BufferAllocator_new(buff, BUFFER_SIZE);
+    struct Allocator* allocator = MallocAllocator_new(1<<20);
     struct Writer* logwriter = FileWriter_new(stdout, allocator);
     struct Log* logger = WriterLog_new(logwriter, allocator);
     struct CryptoAuth* ca = CryptoAuth_new(allocator, NULL, eventBase, logger, NULL);
@@ -275,12 +272,38 @@ void repeatHello()
     Assert_always(finalOut->length == 12);
     Assert_always(Bits_memcmp(hello, finalOut->bytes, 12) == 0);
     //printf("bytes=%s  length=%u\n", finalOut->bytes, finalOut->length);
+
+    Allocator_free(allocator);
+}
+
+void testGetUsers()
+{
+    struct Allocator* allocator = MallocAllocator_new(1<<20);
+    struct EventBase* base = EventBase_new(allocator);
+    struct CryptoAuth* ca = CryptoAuth_new(allocator, NULL, base, NULL, NULL);
+    List* users = NULL;
+
+    users = CryptoAuth_getUsers(ca, allocator);
+    Assert_always(List_size(users) == -1);
+
+    CryptoAuth_addUser(String_CONST("pass1"), 1, String_CONST("user1"), ca);
+    users = CryptoAuth_getUsers(ca, allocator);
+    Assert_always(List_size(users) == 1);
+    Assert_always(String_equals(String_CONST("user1"),List_getString(users,0)));
+
+    CryptoAuth_addUser(String_CONST("pass2"), 1, String_CONST("user2"), ca);
+    users = CryptoAuth_getUsers(ca, allocator);
+    Assert_always(List_size(users) == 2);
+    Assert_always(String_equals(String_CONST("user2"),List_getString(users,0)));
+    Assert_always(String_equals(String_CONST("user1"),List_getString(users,1)));
+
+    Allocator_free(allocator);
 }
 
 int main()
 {
     struct Allocator* allocator;
-    BufferAllocator_STACK(allocator, 256);
+    BufferAllocator_STACK(allocator, 512);
     eventBase = EventBase_new(allocator);
     helloNoAuth();
     helloWithAuth();
@@ -288,5 +311,6 @@ int main()
     encryptRndNonceTest();
     createNew();
     repeatHello();
+    testGetUsers();
     return 0;
 }

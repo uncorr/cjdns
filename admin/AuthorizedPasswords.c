@@ -40,6 +40,7 @@ static void add(Dict* args, void* vcontext, String* txid)
 
     String* passwd = Dict_getString(args, String_CONST("password"));
     int64_t* authType = Dict_getInt(args, String_CONST("authType"));
+    String* user = Dict_getString(args, String_CONST("user"));
     int64_t one = 1;
     if (!authType) {
         authType = &one;
@@ -47,8 +48,7 @@ static void add(Dict* args, void* vcontext, String* txid)
         sendResponse(String_CONST("Specified auth type is not supported."), context->admin, txid);
         return;
     }
-
-    int32_t ret = CryptoAuth_addUser(passwd, *authType, context, context->ca);
+    int32_t ret = CryptoAuth_addUser(passwd, *authType, user, context->ca);
 
     switch (ret) {
         case 0:
@@ -69,12 +69,35 @@ static void add(Dict* args, void* vcontext, String* txid)
     }
 }
 
-static void flush(Dict* args, void* vcontext, String* txid)
+static void remove(Dict* args, void* vcontext, String* txid)
 {
     struct Context* context = (struct Context*) vcontext;
-    // We only remove users which were added using this api.
-    CryptoAuth_removeUsers(context->ca, context);
-    sendResponse(String_CONST("none"), context->admin, txid);
+    String* user = Dict_getString(args, String_CONST("user"));
+
+    int32_t ret = CryptoAuth_removeUsers(context->ca, user);
+    if (ret) {
+        sendResponse(String_CONST("none"), context->admin, txid);
+    } else {
+        sendResponse(String_CONST("Unknown error."), context->admin, txid);
+    }
+}
+
+static void list(Dict* args, void* vcontext, String* txid)
+{
+    struct Context* context = (struct Context*) vcontext;
+    struct Allocator* child = Allocator_child(context->allocator);
+
+    List* users = CryptoAuth_getUsers(context->ca, child);
+    uint32_t count = List_size(users);
+
+    Dict response = Dict_CONST(
+        String_CONST("total"), Int_OBJ(count), Dict_CONST(
+        String_CONST("users"), List_OBJ(users), NULL
+    ));
+
+    Admin_sendMessage(&response, txid, context->admin);
+
+    Allocator_free(child);
 }
 
 void AuthorizedPasswords_init(struct Admin* admin,
@@ -89,7 +112,12 @@ void AuthorizedPasswords_init(struct Admin* admin,
     Admin_registerFunction("AuthorizedPasswords_add", add, context, true,
         ((struct Admin_FunctionArg[]){
             { .name = "password", .required = 1, .type = "String" },
+            { .name = "user", .required = 1, .type = "String" },
             { .name = "authType", .required = 0, .type = "Int" }
         }), admin);
-    Admin_registerFunction("AuthorizedPasswords_flush", flush, context, true, NULL, admin);
+    Admin_registerFunction("AuthorizedPasswords_remove", remove, context, true,
+        ((struct Admin_FunctionArg[]){
+            { .name = "user", .required = 1, .type = "String" }
+        }), admin);
+    Admin_registerFunction("AuthorizedPasswords_list", list, context, true, NULL, admin);
 }

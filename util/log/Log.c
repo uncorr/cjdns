@@ -14,15 +14,43 @@
  */
 
 #include "util/log/Log.h"
+#include "util/log/Log_impl.h"
+
+#include <stdarg.h>
 
 #ifdef Illumos
     #define _XPG4_2
 #endif
 #include <strings.h>
 
-#ifdef WIN32
-    #define strcasecmp strcmp
-#endif
+void Log_print(struct Log* log,
+               enum Log_Level logLevel,
+               const char* file,
+               int line,
+               const char* format,
+               ...)
+{
+    static int inLogger;
+    static int droppedMessages;
+    if (inLogger++) {
+        // return prevent stack overflow.
+        droppedMessages++;
+        return;
+    }
+
+    va_list args;
+    va_start(args, format);
+    log->print(log, logLevel, file, line, format, args);
+    va_end(args);
+
+    inLogger--;
+
+    if (droppedMessages && !inLogger) {
+        Log_print(log, Log_Level_INFO, __FILE__, __LINE__, "There were [%d] dropped log messages.",
+                  droppedMessages);
+        droppedMessages = 0;
+    }
+}
 
 char* Log_nameForLevel(enum Log_Level logLevel)
 {

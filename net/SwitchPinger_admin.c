@@ -26,12 +26,14 @@ struct Context
 {
     struct SwitchPinger* switchPinger;
     struct Admin* admin;
+    struct Allocator* alloc;
 };
 
 struct Ping
 {
     struct Context* context;
     String* txid;
+    String* path;
 };
 
 static void adminPingOnResponse(enum SwitchPinger_Result result,
@@ -48,14 +50,17 @@ static void adminPingOnResponse(enum SwitchPinger_Result result,
     String* pathStr = &(String) { .bytes = (char*) path, .len = 19 };
 
     Dict response = Dict_CONST(
-        String_CONST("version"), Int_OBJ(version), Dict_CONST(
-        String_CONST("result"), String_OBJ(resultStr), NULL
-    ));
+        String_CONST("version"), Int_OBJ(version), NULL
+    );
 
-    Dict d = Dict_CONST(String_CONST("path"), String_OBJ(pathStr), response);
-    if (result != SwitchPinger_Result_TIMEOUT) {
+    Dict d = Dict_CONST(String_CONST("rpath"), String_OBJ(pathStr), response);
+    if (result == SwitchPinger_Result_LABEL_MISMATCH) {
         response = d;
     }
+
+    response = Dict_CONST(String_CONST("result"), String_OBJ(resultStr), response);
+
+    response = Dict_CONST(String_CONST("path"), String_OBJ(ping->path), response);
 
     response = Dict_CONST(String_CONST("ms"), Int_OBJ(millisecondsLag), response);
 
@@ -79,14 +84,19 @@ static void adminPing(Dict* args, void* vcontext, String* txid)
     if (pathStr->len != 19 || AddrTools_parsePath(&path, (uint8_t*) pathStr->bytes)) {
         err = String_CONST("path was not parsable.");
     } else {
-        struct SwitchPinger_Ping* ping =
-            SwitchPinger_newPing(path, data, timeout, adminPingOnResponse, context->switchPinger);
+        struct SwitchPinger_Ping* ping = SwitchPinger_newPing(path,
+                                                              data,
+                                                              timeout,
+                                                              adminPingOnResponse,
+                                                              context->alloc,
+                                                              context->switchPinger);
         if (!ping) {
             err = String_CONST("no open slots to store ping, try later.");
         } else {
             ping->onResponseContext = Allocator_clone(ping->pingAlloc, (&(struct Ping) {
                 .context = context,
                 .txid = String_clone(txid, ping->pingAlloc),
+                .path = String_clone(pathStr, ping->pingAlloc)
             }));
             SwitchPinger_sendPing(ping);
         }
@@ -104,6 +114,7 @@ void SwitchPinger_admin_register(struct SwitchPinger* sp,
 {
     struct Context* ctx = Allocator_clone(alloc, (&(struct Context) {
         .switchPinger = sp,
+        .alloc = alloc,
         .admin = admin
     }));
 

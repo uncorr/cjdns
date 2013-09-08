@@ -16,11 +16,8 @@ add_subdirectory(platform)
 
 find_package(Socket REQUIRED)
 
-add_library(cjdns-errno Errno.c)
-
-if(WIN32)
-    set(sec Security_W32.c)
-    target_link_libraries(cjdns-errno ${SOCKET_LIBRARIES})
+if(Windows)
+    set(sec Security_Windows.c)
 else()
     set(sec Security.c)
 endif()
@@ -32,25 +29,19 @@ add_library(cjdns-security
 
 target_link_libraries(cjdns-security
     cjdns-except
-    cjdns-errno
-)
-
-add_library(cjdns-process
-    Process_${SYSTEM}.c
 )
 
 add_library(util
     AverageRoller.c
     Hex.c
     Pinger.c
-    Pipe.c
     Security_admin.c
+    Assert.c
 )
 target_link_libraries(util
     cjdmemory
     cjdns-security
     cjdns-util-log-writer
-    cjdns-errno
     cjdns-util-platform-socket
 )
 

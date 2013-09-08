@@ -15,7 +15,6 @@
 #define string_strncpy
 #define string_strlen
 #include "memory/MallocAllocator.h"
-#include "memory/CanaryAllocator.h"
 #include "memory/Allocator.h"
 #include "net/Ducttape.h"
 #include "util/platform/libc/string.h"
@@ -23,6 +22,8 @@
 #include "test/TestFramework.h"
 
 #include <stdio.h>
+
+#define PADDING 512
 
 int main()
 {
@@ -76,9 +77,9 @@ int main()
         TestFramework_setUp("0123456789abcdefghijklmnopqrstuv", alloc, NULL)->ducttape;
 
     // This has to be limited because we are checking for an OOM issue.
-    struct Allocator* allocator = CanaryAllocator_new(MallocAllocator_new(85000), NULL);
+    struct Allocator* allocator = MallocAllocator_new(85000);
     uint16_t buffLen = sizeof(struct Ducttape_IncomingForMe) + 8 + strlen(evilBenc);
-    uint8_t* buff = Allocator_calloc(allocator, buffLen, 1);
+    uint8_t* buff = Allocator_calloc(allocator, buffLen + PADDING, 1);
 
     struct Headers_IP6Header* ip6 = (struct Headers_IP6Header*) (buff + Headers_SwitchHeader_SIZE);
     uint8_t* herPublicKey = (uint8_t*) "0123456789abcdefghijklmnopqrstuv";
@@ -92,7 +93,7 @@ int main()
 
     strncpy((char*)(udp + 1), evilBenc, strlen(evilBenc));
 
-    struct Message m = { .bytes = buff, .length = buffLen, .padding = 0 };
+    struct Message m = { .bytes = buff+PADDING, .length = buffLen, .padding = PADDING };
 
     Ducttape_injectIncomingForMe(&m, dt, herPublicKey);
 

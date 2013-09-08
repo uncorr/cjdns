@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # You may redistribute this program and/or modify it under the terms of
 # the GNU General Public License as published by the Free Software Foundation,
@@ -31,34 +31,54 @@
 #  ./cjdns.sh restart
 ##
 
-# path of cjdns
-if [ -z "$CJDPATH" ]; then CJDPATH="`dirname $0`/"; fi
+if [ -f /etc/default/cjdns ]; then
+  . /etc/default/cjdns
+fi
 
-# path to the cjdroute process
-if [ -z "$CJDROUTE" ]; then CJDROUTE="${CJDPATH}cjdns/cjdroute"; fi
+# path to the cjdns source tree, no trailing slash
+if [ -z "$CJDPATH" ]; then CJDPATH=`dirname $0`; fi
 
-# path of the cjdns process
-if [ -z "$CJDNS" ]; then CJDNS="${CJDPATH}cjdns/cjdns"; fi
+# full path to the cjdroute binary
+if [ -z "$CJDROUTE" ]; then CJDROUTE="${CJDPATH}/cjdns/cjdroute"; fi
 
-# path to the configuration
-if [ -z "$CONF" ]; then CONF="${CJDPATH}cjdroute.conf"; fi
+# full path to the configuration file
+if [ -z "$CONF" ]; then CONF="${CJDPATH}/cjdroute.conf"; fi
 
-# path ot the log file.
+# path to the log file.
 if [ -z "$LOGTO" ]; then LOGTO="/dev/null"; fi
 
-PID=$(pgrep -d " " -f "$CJDNS")
+load_pid()
+{
+    PID=$(pgrep -d " " -f "$CJDROUTE")
+}
+
+load_pid
 
 stop()
 {
-    [ ! -z "$PID" ] && kill $PID &> /dev/null
-    if [ $? -gt 0 ]; then return 1; fi
+    if [ -z "$PID" ]; then
+        echo "cjdns is not running"
+        return 1
+    else
+        kill $PID &> /dev/null
+        while [ -n "$(pgrep -d " " -f "$CJDROUTE")" ]; do
+            echo "* Waiting for cjdns to shut down..."
+            sleep 1;
+        done
+        if [ $? -gt 0 ]; then return 1; fi
+    fi
 }
 
 start()
 {
-    $CJDROUTE < $CONF &>> $LOGTO
-    if [ $? -gt 0 ]; then
-        echo "Failed to start. (CJDNS already running?)"
+    if [ -z "$PID" ]; then
+        $CJDROUTE < $CONF &>> $LOGTO
+        if [ $? -gt 0 ]; then
+            echo "Failed to start cjdns"
+            return 1
+        fi
+    else
+        echo "cjdns is already running"
         return 1
     fi
 }
@@ -75,12 +95,29 @@ status()
     fi
 }
 
+update()
+{
+    if [ -d ${CJDPATH}/cjdns/.git ]; then
+        cd ${CJDPATH}/cjdns
+        git pull
+        ./do || echo "Failed to update!" && exit 1
+        echo "* Update complete, restarting cjdns"
+        stop
+        load_pid
+        start
+    else
+        echo "The cjdns source directory does not exist"
+        return 1
+    fi
+}
+
 case "$1" in
     "start" )
         start
         ;;
     "restart" )
         stop
+        load_pid
         start
         ;;
     "stop" )
@@ -92,6 +129,9 @@ case "$1" in
     "check" )
         ps aux | grep -v 'grep' | grep 'cjdns core' > /dev/null 2>/dev/null || start
         ;;
+    "update" )
+        update
+        ;;
     *)
-        echo "usage: /etc/rc.d/cjdns {start|stop|restart|check}"
+        echo "usage: $0 {start|stop|restart|check|update}"
 esac

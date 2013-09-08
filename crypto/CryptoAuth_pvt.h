@@ -32,7 +32,7 @@ struct CryptoAuth_Auth {
 
     uint8_t secret[32];
 
-    void* user;
+    String* user;
 };
 
 struct CryptoAuth_pvt
@@ -72,7 +72,7 @@ struct CryptoAuth_Wrapper
      * If an object was associated with a password and the remote host authed
      * with the password this will be the object, otherwise it will be null.
      */
-    void* user;
+    String* user;
 
     /** The shared secret. */
     uint8_t secret[32];
@@ -106,9 +106,6 @@ struct CryptoAuth_Wrapper
 
     /** If true and the other end is connecting, do not respond until a valid password is sent. */
     bool requireAuth : 1;
-
-    /** True if there is a message which is buffered until a connection is setup. */
-    bool hasBufferedMessage : 1;
 
     /** A pointer back to the main cryptoauth context. */
     struct CryptoAuth_pvt* const context;

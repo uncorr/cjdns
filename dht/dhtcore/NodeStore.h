@@ -15,6 +15,7 @@
 #ifndef NodeStore_H
 #define NodeStore_H
 
+#include "crypto/random/Random.h"
 #include "dht/Address.h"
 #include "dht/dhtcore/Node.h"
 #include "util/log/Log.h"
@@ -35,8 +36,9 @@ struct NodeStore;
  */
 struct NodeStore* NodeStore_new(struct Address* myAddress,
                                 const uint32_t capacity,
-                                const struct Allocator* allocator,
+                                struct Allocator* allocator,
                                 struct Log* logger,
+                                struct Random* rand,
                                 struct Admin* admin);
 
 /**
@@ -62,8 +64,22 @@ struct Node* NodeStore_getBest(struct Address* targetAddress, struct NodeStore* 
 
 struct NodeList* NodeStore_getNodesByAddr(struct Address* address,
                                           const uint32_t max,
-                                          const struct Allocator* allocator,
+                                          struct Allocator* allocator,
                                           struct NodeStore* store);
+
+/**
+ * Get direct peers of this node.
+ * Will get peers with switch labels XOR close to the provided label up to max number.
+ *
+ * @param label will get peers whose labels are XOR close to this label.
+ * @param max will not return more than this number of peers.
+ * @param allocator for getting memory for the list.
+ * @param store the nodestore.
+ */
+struct NodeList* NodeStore_getPeers(uint64_t label,
+                                    const uint32_t max,
+                                    struct Allocator* allocator,
+                                    struct NodeStore* store);
 
 /**
  * Get the best nodes for servicing a lookup.
@@ -87,7 +103,7 @@ struct NodeList* NodeStore_getClosestNodes(struct NodeStore* store,
                                            const uint32_t count,
                                            bool allowNodesFartherThanUs,
                                            uint32_t versionOfRequestingNode,
-                                           const struct Allocator* allocator);
+                                           struct Allocator* allocator);
 
 /**
  * Change the reach of a node in the NodeStore.
@@ -122,15 +138,5 @@ void NodeStore_remove(struct Node* node, struct NodeStore* store);
  * @return the number of nodes which were removed.
  */
 int NodeStore_brokenPath(uint64_t path, struct NodeStore* store);
-
-/**
- * Return a node from the routing table which is likely to yield a good route but is not favored.
- * Good candidates are defined as nodes whose known link state is worse than average but their
- * label length is shorter than average. These are probably better nodes but their link state
- * is low or 0 because they have never been pinged so it's unknown.
- *
- * @param store the node store.
- */
-struct Node* NodeStore_getGoodCandidate(struct NodeStore* store);
 
 #endif

@@ -16,6 +16,8 @@ add_library(dhtcore
     SearchStore.c
     Janitor.c
     VersionList.c
+    SearchRunner.c
+    RouteTracer.c
 )
 
 target_link_libraries(dhtcore
@@ -24,6 +26,7 @@ target_link_libraries(dhtcore
     crypto
     switch
     cjdns-util-version-version
+    cjdns-util-events-libuv-time
 )
 
 # Everything must be tested.

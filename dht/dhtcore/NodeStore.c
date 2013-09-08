@@ -48,8 +48,9 @@ static void dumpTable(Dict* msg, void* vnodeStore, String* txid);
 /** See: NodeStore.h */
 struct NodeStore* NodeStore_new(struct Address* myAddress,
                                 const uint32_t capacity,
-                                const struct Allocator* allocator,
+                                struct Allocator* allocator,
                                 struct Log* logger,
+                                struct Random* rand,
                                 struct Admin* admin)
 {
     struct NodeStore* out = Allocator_malloc(allocator, sizeof(struct NodeStore));
@@ -61,6 +62,7 @@ struct NodeStore* NodeStore_new(struct Address* myAddress,
     out->size = 0;
     out->admin = admin;
     out->labelSum = 0;
+    out->rand = rand;
 
     struct Admin_FunctionArg adma[1] = {
         { .name = "page", .required = 1, .type = "Int" },
@@ -310,7 +312,7 @@ struct Node* NodeStore_getBest(struct Address* targetAddress, struct NodeStore* 
 
 struct NodeList* NodeStore_getNodesByAddr(struct Address* address,
                                           const uint32_t max,
-                                          const struct Allocator* allocator,
+                                          struct Allocator* allocator,
                                           struct NodeStore* store)
 {
     struct NodeCollector* collector = NodeCollector_new(address,
@@ -341,6 +343,44 @@ struct NodeList* NodeStore_getNodesByAddr(struct Address* address,
     return out;
 }
 
+struct NodeList* NodeStore_getPeers(uint64_t label,
+                                    const uint32_t max,
+                                    struct Allocator* allocator,
+                                    struct NodeStore* store)
+{
+    // truncate the label to the part which this node uses...
+    label &= (((uint64_t)1) << NumberCompress_bitsUsedForLabel(label)) - 1;
+
+    struct NodeList* out = Allocator_malloc(allocator, sizeof(struct NodeList));
+    out->nodes = Allocator_calloc(allocator, sizeof(char*), max);
+
+    for (int i = 0; i < store->size; i++) {
+        uint64_t p = store->nodes[i].address.path;
+        if (LabelSplicer_isOneHop(p)) {
+            int j;
+            for (j = 0; j < (int)max; j++) {
+                if (out->nodes[j] && (out->nodes[j]->address.path ^ label) < (p ^ label)) {
+                    break;
+                }
+            }
+            switch (j) {
+                default: Bits_memmove(out->nodes, &out->nodes[1], (j - 1) * sizeof(char*));
+                case 1: out->nodes[j - 1] = &store->nodes[i];
+                case 0:;
+            }
+        }
+    }
+    out->size = 0;
+    for (int i = 0; i < (int)max; i++) {
+        if (out->nodes[i]) {
+            out->nodes = &out->nodes[i];
+            out->size = max - i;
+            break;
+        }
+    }
+    return out;
+}
+
 /** See: NodeStore.h */
 struct NodeList* NodeStore_getClosestNodes(struct NodeStore* store,
                                            struct Address* targetAddress,
@@ -348,7 +388,7 @@ struct NodeList* NodeStore_getClosestNodes(struct NodeStore* store,
                                            const uint32_t count,
                                            bool allowNodesFartherThanUs,
                                            uint32_t versionOfRequestingNode,
-                                           const struct Allocator* allocator)
+                                           struct Allocator* allocator)
 {
     // LinkStateNodeCollector strictly requires that allowNodesFartherThanUs be true.
     struct NodeCollector* collector = NodeCollector_new(targetAddress,
@@ -437,7 +477,7 @@ uint32_t NodeStore_size(const struct NodeStore* const store)
 struct Node* NodeStore_getNodeByNetworkAddr(uint64_t path, struct NodeStore* store)
 {
     if (path == 0) {
-        return (store->size > 0) ? &store->nodes[rand() % store->size] : NULL;
+        return (store->size > 0) ? &store->nodes[Random_uint32(store->rand) % store->size] : NULL;
     }
 
     for (int i = 0; i < store->size; i++) {

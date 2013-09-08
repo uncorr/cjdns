@@ -13,12 +13,12 @@
 
 import sys;
 import os;
-from cjdns import cjdns_connectWithAdminInfo;
+from cjdnsadmin.cjdnsadmin import connectWithAdminInfo;
 import json;
 from pprint import pprint;
 from time import sleep;
 
-cjdns = cjdns_connectWithAdminInfo();
+cjdns = connectWithAdminInfo();
 
 nodes = {};
 while (1):

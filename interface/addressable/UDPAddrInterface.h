@@ -22,8 +22,11 @@
 #include "util/events/EventBase.h"
 #include "util/log/Log.h"
 
-#define UDPAddrInterface_PADDING 512
-#define UDPAddrInterface_MAX_PACKET_SIZE 3500
+#define UDPAddrInterface_PADDING_AMOUNT 512
+#define UDPAddrInterface_BUFFER_CAP 3500
+
+/** Maximum number of bytes to hold in queue before dropping packets. */
+#define UDPAddrInterface_MAX_QUEUE 100000
 
 /**
  * @param base the event loop context.

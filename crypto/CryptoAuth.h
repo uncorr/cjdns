@@ -65,7 +65,7 @@ struct CryptoAuth_Wrapper;
 #define CryptoAuth_addUser_DUPLICATE         -3
 int32_t CryptoAuth_addUser(String* password,
                            uint8_t authType,
-                           void* user,
+                           String* user,
                            struct CryptoAuth* context);
 
 /**
@@ -75,7 +75,16 @@ int32_t CryptoAuth_addUser(String* password,
  * @param user the identifier which was passed to addUser(), all users with this id will be removed.
  * @return the number of users removed.
  */
-int CryptoAuth_removeUsers(struct CryptoAuth* context, void* user);
+int CryptoAuth_removeUsers(struct CryptoAuth* context, String* user);
+
+/**
+ * Get a list of all the users added via addUser.
+ *
+ * @param context the context used to call addUser.
+ * @param alloc the Allocator to use to create the usersOut array.
+ * @returns List* containing the user String's
+ */
+List* CryptoAuth_getUsers(struct CryptoAuth* context, struct Allocator* alloc);
 
 /**
  * Get the user object associated with the authenticated session or NULL if there is none.
@@ -86,7 +95,7 @@ int CryptoAuth_removeUsers(struct CryptoAuth* context, void* user);
  * @return the user object added by calling CryptoAuth_addUser() or NULL if this session is not
  *         authenticated.
  */
-void* CryptoAuth_getUser(struct Interface* iface);
+String* CryptoAuth_getUser(struct Interface* iface);
 
 /**
  * Create a new crypto authenticator.
@@ -107,6 +116,10 @@ struct CryptoAuth* CryptoAuth_new(struct Allocator* allocator,
 
 /**
  * Wrap an interface with crypto authentication.
+ *
+ * NOTE: Sending empty packets during the handshake is not allowed!
+ *       Empty packets are used for signaling during the handshake so they can
+ *       only be used while the session is in state ESTABLISHED.
  *
  * @param toWarp the interface to wrap
  * @param herPublicKey the public key of the other party or NULL if unknown.

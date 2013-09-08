@@ -26,7 +26,6 @@
 #include "util/log/WriterLog.h"
 #include "util/events/EventBase.h"
 #include "util/platform/libc/string.h"
-#include "memory/CanaryAllocator.h"
 #include "memory/MallocAllocator.h"
 #include "memory/Allocator.h"
 #include "switch/NumberCompress.h"
@@ -140,14 +139,14 @@ static int reconnectionNewEndpointTest(struct InterfaceController* ifController,
 
 int main()
 {
-    struct Allocator* alloc = CanaryAllocator_new(MallocAllocator_new(1<<20), NULL);
+    struct Allocator* alloc = MallocAllocator_new(1<<20);
 
     struct TestFramework* tf =
         TestFramework_setUp("\xad\x7e\xa3\x26\xaa\x01\x94\x0a\x25\xbc\x9e\x01\x26\x22\xdb\x69"
                             "\x4f\xd9\xb4\x17\x7c\xf3\xf8\x91\x16\xf3\xcf\xe8\x5c\x80\xe1\x4a",
                             alloc, NULL);
 
-    CryptoAuth_addUser(String_CONST("passwd"), 1, (void*)0x01, tf->cryptoAuth);
+    CryptoAuth_addUser(String_CONST("passwd"), 1, String_CONST("TEST"), tf->cryptoAuth);
 
     struct Message* message;
     struct Interface iface = {
@@ -160,12 +159,14 @@ int main()
 
     ////////////////////////
 
-    return reconnectionNewEndpointTest(tf->ifController,
-                                       tf->publicKey,
-                                       &message,
-                                       alloc,
-                                       tf->eventBase,
-                                       tf->logger,
-                                       &iface,
-                                       tf->rand);
+    int ret = reconnectionNewEndpointTest(tf->ifController,
+                                          tf->publicKey,
+                                          &message,
+                                          alloc,
+                                          tf->eventBase,
+                                          tf->logger,
+                                          &iface,
+                                          tf->rand);
+    Allocator_free(alloc);
+    return ret;
 }
