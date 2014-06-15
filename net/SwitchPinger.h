@@ -16,12 +16,17 @@
 #define SwitchPinger_H
 
 #include "benc/String.h"
+#include "dht/Address.h"
 #include "crypto/random/Random.h"
 #include "interface/Interface.h"
 #include "util/events/EventBase.h"
 #include "util/log/Log.h"
+#include "util/Linker.h"
+Linker_require("net/SwitchPinger.c")
 
 #include <stdint.h>
+
+#define SwitchPinger_DEFAULT_MAX_CONCURRENT_PINGS 50
 
 enum SwitchPinger_Result
 {
@@ -36,6 +41,9 @@ enum SwitchPinger_Result
 
     /** Instead of a normal response, got an error control packet. */
     SwitchPinger_Result_ERROR_RESPONSE,
+
+    /** A sub-set of ERROR_RESPONSE where the route contains a loop. */
+    SwitchPinger_Result_LOOP_ROUTE,
 
     /** Ping timeout. */
     SwitchPinger_Result_TIMEOUT
@@ -97,17 +105,11 @@ struct SwitchPinger_Ping* SwitchPinger_newPing(uint64_t label,
                                                struct Allocator* alloc,
                                                struct SwitchPinger* ctx);
 
-/**
- * Send a ping message after allocating a callback structure for it.
- *
- * @param ping the ping to send.
- */
-void SwitchPinger_sendPing(struct SwitchPinger_Ping* ping);
-
 struct SwitchPinger* SwitchPinger_new(struct Interface* iface,
                                       struct EventBase* eventBase,
                                       struct Random* rand,
                                       struct Log* logger,
+                                      struct Address* myAddr,
                                       struct Allocator* alloc);
 
 #endif

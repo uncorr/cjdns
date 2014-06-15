@@ -62,9 +62,12 @@ static int registerPeer(struct InterfaceController* ic,
     return 0;
 }
 
-static enum InterfaceController_PeerState getPeerState(struct Interface* iface)
+static struct InterfaceController_Peer* getPeer(struct InterfaceController* ifc,
+                                                struct Interface* iface)
 {
-    return InterfaceController_PeerState_HANDSHAKE;
+    return Allocator_clone(iface->allocator, (&(struct InterfaceController_Peer) {
+        .state = InterfaceController_PeerState_NEW
+    }));
 }
 
 int main()
@@ -76,7 +79,7 @@ int main()
     struct Context ctx = {
         .ic = {
             .registerPeer = registerPeer,
-            .getPeerState = getPeerState
+            .getPeer = getPeer
         }
     };
 
@@ -86,7 +89,7 @@ int main()
         .senderContext = &ctx
     };
 
-    /*struct MultiInterface* mif = */MultiInterface_new(KEY_SIZE, &externalIf, &ctx.ic);
+    /*struct MultiInterface* mif = */MultiInterface_new(KEY_SIZE, &externalIf, &ctx.ic, NULL);
 
     struct Entry* entries = Allocator_malloc(alloc, sizeof(struct Entry) * ENTRY_COUNT);
     Random_bytes(rand, (uint8_t*)entries, ENTRY_COUNT * sizeof(struct Entry));
@@ -107,18 +110,19 @@ int main()
         struct Message* msg;
         Message_STACK(msg, 0, 128);
 
-        Message_push(msg, "hello world", 12);
-        Message_push(msg, entry, 16);
+        Message_push(msg, "hello world", 12, NULL);
+        Message_push(msg, entry, 16, NULL);
 
         externalIf.receiveMessage(msg, &externalIf);
 
         //printf("Received message for iface [%u] from [%p]\n", rnd, (void*)ctx.receivedOn);
         if (iface) {
-            Assert_always(ctx.receivedOn == iface);
+            Assert_true(ctx.receivedOn == iface);
         } else {
             ifaces[rnd] = ctx.receivedOn;
         }
     }
 
     Allocator_free(alloc);
+    return 0;
 }

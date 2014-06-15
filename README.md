@@ -1,6 +1,6 @@
-# Cjdns
+# cjdns
 
-Русская версия Readme [README_RU.md](README_RU.md)
+Русская версия Readme: [README_RU.md](README_RU.md)
 
 #### *Networking Reinvented*
 
@@ -11,68 +11,85 @@ scalability issues that plague existing networks.
 
 [![Build Status](https://travis-ci.org/cjdelisle/cjdns.png?branch=master)](https://travis-ci.org/cjdelisle/cjdns)
 
+## **ALERT**
+
+Versions from prior to Dec 26 2013 have a serious security issue allowing an
+attacker inside of the network to impersonate somebody else. If you are using
+an old version, please update. If the new version does not build or work for you
+please use `stable-0.5` and report the issue on github or in IRC. Note that
+`stable-0.5` will receive only critical security patches and not be updated as
+the protocol changes so using it is not a long term solution.
+
+### **UBUNTU USERS**
+
+The PPA at `https://code.launchpad.net/~calebdelisle/cjdns-apt` is no-longer
+maintained, because of limitations in the launchpad system, it can neither be
+updated to `stable-0.5` nor to the master branch and
+THE LAST SUCCESSFUL BUILD WAS BEFORE THE SECURITY PATCH.
+Please switch to the [new standalone repository](https://github.com/Shnatsel/cjdns-ubuntu-pubkey)
+administered by Sergey Davidoff.
+
 
 ## With built-in security and auto-configuration, everybody can own part of the network
 
-The Internet gives everyone incredible power of expression once reserved for
-those wealthy enough to own a radio station or newspaper. Still, the
-Internet's aging protocols have inherent limitations which make them
+The Internet gives everyone incredible power of expression that was once
+reserved for those wealthy enough to own a radio station or newspaper. Still,
+the Internet's aging protocols have inherent limitations which make them
 unfavorable toward a network owned by the people.
 
-Recent revelations have triggered public outcry over governments reading
-of our email but few stop to imagine the implications of an unsecured
+Recent revelations over governments reading our emails have triggered public
+outcry but few stop to imagine the implications of an unsecured
 mesh network, in such a network *everybody* could read your email.
 
-All over the world we see Internet access markets dominated by a few
-businesses who charge outrageous rates and have not materially increased
-Internet speed since crushing the dial-up providers at the beginning of the
-21st century. Most agree that we need more competition but few recognize that
-if we cannot trust the handful of ISPs we have now, how have no hope of trusting
-the next 10,000 ISP which we will need to bring about meaningful competition.
+Competition in Internet Access markets worldwide has withered, dominated by a
+few businesses who charge outrageous rates and have not materially increased
+Internet speed since crushing the dial-up providers. Most agree that more market
+diversity is necessary, but if the handful of ISPs we have now cannot be trusted
+to handle our data, there is no reason to expect that the next generation of
+Internet Service Providers would either.
 
-Indeed the problem of trust extends beyond our private correspondence. The very
-fabric of the Internet can be torn apart at any moment by a malicious ISP or
-even an honest mistake as was seen in April 8, 2010 when somebody at China
-Telecom misconfigured a router causing widespread Internet outages which lasted
-fifteen minutes.
+The problem of trust extends beyond private correspondence. The very
+fabric of the Internet can be torn apart by a malicious ISP or even an honest
+mistake. On April 8th, 2010, an employee at China Telecom misconfigured a
+router - causing widespread Internet outages lasting up to fifteen minutes.
 
-As governments continue pushing to filter websites, there is an ever increasing
-risk of back-and-forth retaliatory filtration eventually leaving entire nations
-isolated and breeding the hate and intolerance which the Internet promised to
-end.
+As world governments continue pushing to filter websites, there is an ever
+increasing risk of back-and-forth retaliatory filtration eventually leaving
+entire nations isolated and breeding the hate and intolerance which the Internet
+promised to end.
 
-Cjdns was designed with the understanding that we must securely remove central
-authority for The Internet to continue spanning the globe without borders and
-boundaries. It is not just a nice idea, the very future of The Open Web is at
+Cjdns was designed with the understanding that for the Internet to continue
+existing without borders, authority over it's processes must be decentralized.
+This isn't, and can't be, just a dream - the future of the open Internet is at
 stake.
 
 
 ## Security
 
 When you receive a packet of information from the Internet, it seems logical to
-assume that it was meant for you, that it came from the computer which it says
-it came from and that nobody else has been reading or modifying it on the way.
-While many popular software applications are designed around these assumptions,
-the existing Internet does not guarantee any of them and a number of network
+assume that it was meant for you - that it came from the computer which it says
+it came from and that nobody else has read or modified it on the way. While many
+popular software applications are designed around these assumptions, the
+existing Internet does not guarantee any of them and a number of network
 security exploits come from the cases where these assumptions break down.
 
 Cjdns guarantees confidentiality, authenticity and integrity of data by using
 modern cryptography in a non-intrusive way. Information transmitted over a cjdns
 network can't be altered or read en-route. While you can create multiple
 identities, it's practically impossible to impersonate other nodes on the
-network and since a node's IPv6 address is the fingerprint of it's key,
+network and since a node's IPv6 address is the fingerprint of its key,
 man-in-the-middle attacks are not possible.
 
 
 ## Simplicity
 
-Traditional networks require manual configuration of IP addresses. To get these
-addresses one must join an Internet Registry and file a lengthy application.
-Cjdns nodes generate their own addresses along with their keys, when two nodes
-find each other, they connect. When many nodes find one another, they form a
-network. General network architecture is of course needed to avoid bottlenecks
-but once the nodes are put in the right places, they will discover their roles
-in the network.
+Traditional networks require manual configuration of IP addresses. For one to
+get these addresses one must join an Internet Registry and file a lengthy
+application. Cjdns nodes generate their own addresses along with their keys.
+When two nodes find each other, they connect. When many nodes find one another,
+they form a network. General network architecture is of course needed to avoid
+bottlenecks but once the nodes are put in the right places, they will discover
+their roles in the network.
 
 
 ## Scalability
@@ -97,6 +114,12 @@ close to the target address.
                      obvious, but I think it's neat. Currently on hype from an
                      airplane
 
+    00:36 < tester> man sites take so long to load on i2p
+    00:36 < tester> i value speed over anonymity any day
+
+    <DuoNoxSol> it's notably more reliable than the normal internet
+    <DuoNoxSol> even though it really really shouldn't be
+    <DuoNoxSol> seeing as the connections are largely over the normal internet
 
 
 ## How close is it to complete?
@@ -104,20 +127,20 @@ close to the target address.
 [Hyperboria][] is the largest cjdns network, with hundreds of active nodes
 around the world.
 
-Cjdns has been tested on x86, amd64, ARMv5, ARMv7, MIPS, PowerPC32, and
-PowerPC64. It's [continually tested][buildbots] on Linux, FreeBSD and OS X
+Cjdns has been tested on x86, amd64, ARMv5, ARMv7, MIPS, and PowerPC.
+It's [continually tested][buildbots] on Linux, FreeBSD, OS X, and Illumos
 systems.
 
-While the software itself is stable, the protocols and algorithms are
-experimental and subject to change. To minimize the harm to the network, please
-update your cjdns nodes often.
+The protocols and algorithms are experimental and subject to change.
+To minimize the harm to the network, please update your cjdns nodes often.
 
 
 ### You can help!
 
-We desperately need more OS X buildbots. If you would like to donate one, you
-could mail it, or you could administer it and provide remote shell access.
-Please join the [IRC channel](#community) and ask how you can help.
+We are in need of some buildbots on more obscure systems and architectures.
+If you would like to donate one, you could mail it, or you could administer
+it and provide remote shell access. Please email `buildbot@seattlemesh.net`
+if you'd like to help out.
 
 
 
@@ -164,17 +187,48 @@ The cjdns developers.
 
 ## How to install cjdns
 
-These instructions are for Debian-based Linux distributions. They should be
-informative enough for user on other distributions - just don't expect them to
+These instructions are for Debian-based Linux distributions and OS X. They should be
+informative enough for use on other distributions - just don't expect them to
 work verbatim.
 
 ### 0. Install dependencies
 
-    sudo apt-get install cmake git build-essential
+On both platforms, installing [Node.js](http://nodejs.org/), although preferable, 
+is not strictly necessary. If Node.js is unavailable or an unacceptable version,
+it will be downloaded and installed in the source tree.
 
-Installing cmake, although preferable, is not strictly necessary.  If cmake is
-unavailable or an unacceptable version, it will be downloaded and built in the
-source tree.
+#### Debian-based distro:
+
+    sudo apt-get install nodejs git build-essential
+
+#### OS X:
+
+On OS X, you must install the Command Line Developer Tools. If 
+you already have a recent version of Xcode (>= OS X 10.9 and >= Xcode 5.0.1), run the
+following command:
+
+    xcode-select --install
+
+If Xcode is not installed, you can either install it through the App
+Store and run the command above, or make a free Apple Developer account here:
+[https://developer.apple.com/downloads/index.action](https://developer.apple.com/downloads/index.action).
+Then sign in, search for Command Line Tools, and install the latest package
+compatible with your version of OS X. If you encounter issues, there is a 
+thorough [stackoverflow post](http://stackoverflow.com/a/9329325) on installing
+the Command Line Tools.
+
+You must also install git and Node.js. There are a few options. If you use [Homebrew](http://brew.sh/):
+
+    brew install git nodejs
+
+If you use [Macports](https://www.macports.org/):
+
+    sudo port install git-core nodejs
+
+Or if you use neither and would like to install the binaries from their websites:
+
+- Node.js: [http://nodejs.org/download/](http://nodejs.org/download/)
+- git: [http://git-scm.com/download](http://git-scm.com/download)
 
 ### 1. Retrieve cjdns from GitHub
 
@@ -184,10 +238,6 @@ Clone the repository from GitHub and change to the source directory:
     cd cjdns
 
 ### 2. Build
-
-    make
-
-Alternatively, you may run the do script directly:
 
     ./do
 
@@ -219,7 +269,7 @@ Then `cat /dev/net/tun` again.
 If it says: `cat: /dev/net/tun: Permission denied` You're probably using a VPS
 based on the OpenVZ virtualization platform. Ask your provider to enable the
 TUN/TAP device - this is standard protocol so they should know exactly what you
-need.
+need. If you're on OS X, don't worry about this step.
 
 
 ### 1. Generate a new configuration file
@@ -231,10 +281,10 @@ connections and anyone who connected to you will no longer be able to connect.
 A compromised conf file means that other people can impersonate you on the
 network.
 
-To set permissions on the conf file so that only your user can read it and
-write to it:
+To set generate a conf file with permissions set so that only your user can
+read it and write to it:
 
-    chmod 600 cjdroute.conf
+    (umask 077 && ./cjdroute --genconf > cjdroute.conf)
 
 
 ### 2. Find a friend
@@ -258,7 +308,9 @@ a look at the [Project Meshnet Map][] to find peers near you (note: scroll the
 map right, not left; the markers don't repeat).
 
 
-### 3. Fill in your friend's info
+### 3. Connect your node to your friend's node
+
+**To initiate the connection OUTbound**
 
 In your conf file, you will see:
 
@@ -271,16 +323,24 @@ In your conf file, you will see:
 }
 ```
 
-After adding their connection credentials, it should look like:
+A conf file with multiple friend-nodes, setup OUTbound, should look like:
 
 ``` javascript
 // Nodes to connect to.
 "connectTo":
 {
+    //friend_1 (IPv4: 0.1.2.3; IPv6 fcaa:5bac:66e4:713:cb00:e446:c317:fc39)
     "0.1.2.3:45678":
     {
-        "password": "thisIsNotARealConnection",
-        "publicKey": "thisIsJustForAnExampleDoNotUseThisInYourConfFile.k"
+        "password": "thisIsNotARealConnection_1",
+        "publicKey": "thisIsJustForAnExampleDoNotUseThisInYourConfFile_1.k"
+    }
+    
+    //friend_2 (IPv4: 5.1.2.3; IPv6 fcbb:5bac:66e4:713:cb00:e446:c317:fc39)
+    "5.1.2.3:5678":
+    {
+        "password": "thisIsNotARealConnection_2",
+        "publicKey": "thisIsJustForAnExampleDoNotUseThisInYourConfFile_2.k"
     }
 }
 ```
@@ -288,27 +348,65 @@ After adding their connection credentials, it should look like:
 You can add as many connections as you want to the `connectTo` attribute,
 following JSON syntax.
 
-Your own connection credentials will be shown in a JSON comment above in your
-"authorizedPasswords" section. Do not modify this but if you want to allow
-someone to connect to you, give it to them.
 
-It looks like this:
+**To allow your friend to initiate the connection INbound**
 
+In your conf file, you will see:
 ``` javascript
-/* These are your connection credentials for people connecting to you with your
-default password. Adding more passwords for different users is advisable so
-that leaks can be isolated.
+"authorizedPasswords":
+    [
+        // A unique string which is known to the client and server.
+        {"password": "thisisauniquestring_001"}
+        
+        // More passwords should look like this.
+        // {"password": "thisisauniquestring_002"}
+        // {"password": "thisisauniquestring_003"}
+        // {"password": "thisisauniquestring_004"}
+        ...
+        
+        // "your.external.ip.goes.here:45678":{"password": "thisisauniquestring_001","publicKey":thisisauniqueKEY_001.k"}
 
-"your.external.ip.goes.here:12345":
-{
-    "password": "thisIsNotARealConnectionEither",
-    "publicKey": "thisIsAlsoJustForAnExampleDoNotUseThisInYourConfFile.k"
-}
-*/
+    ],
 ```
 
-`your.external.ip.goes.here` is to be replaced with the IPv4 address which
-people will use to connect to you from over The Old Internet.
+A conf file with multiple friend-nodes, setup INbound, should look like:
+``` javascript
+"authorizedPasswords":
+    [
+        // A unique string which is known to the client and server.
+        {"password": "thisisauniquestring_001"}
+        
+        // More passwords should look like this.
+    //friend_3 (IPv4: 0.1.2.3; IPv6 fcaa:5bac:66e4:713:cb00:e446:c317:fc39)
+{"password": "thisisauniquestring_002"}
+    //friend_4 (IPv4: 5.1.2.3; IPv6 fcbb:5bac:66e4:713:cb00:e446:c317:fc39)
+{"password": "thisisauniquestring_003"}
+        // {"password": "thisisauniquestring_004"}
+        ...
+        
+        // "your.external.ip.goes.here:45678":{"password": "thisisauniquestring_001","publicKey":thisisauniqueKEY_001.k"}
+
+    ],
+```
+
+
+You need to give friend_3 (who is making the INbound connection) the following 4 items:
+
+1. Your external IPv4
+2. The port found in your conf file here:
+
+                `// Bind to this port.
+                "bind": "0.0.0.0:yourportnumberishere",`
+                
+3. Their unique password that you uncommented or created: "password": "thisisauniquestring_002"
+4. Your public key: "publicKey":thisisauniqueKEY_001.k"
+
+
+
+Please note that you and your friend can *initiate* a 
+connection either outbound (from YOU --> FRIEND) or inbound (from FRIEND --> YOU)
+but traffic flows both ways once the connection is established.
+
 
 See [doc/configure.md](doc/configure.md) for more details on configuration,
 including how to peer with other cjdns nodes over ethernet and wifi.
@@ -355,7 +453,7 @@ stay on [IRC](#community) so that people can reach you.
 ## Admin interface
 
 When cjdnroute is up and running, the admin interface will be available at
-<http://localhost:11234> (this can be changed in the cjdroute.conf
+`localhost:11234` (this can be changed in the cjdroute.conf
 configuration file). See [admin/README.md](admin/README.md) for more
 information about the admin interface.
 

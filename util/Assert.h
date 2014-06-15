@@ -16,6 +16,8 @@
 #define Assert_H
 
 #include "util/Gcc.h"
+#include "util/Linker.h"
+Linker_require("util/Assert.c")
 
 #define Assert_STRING(x) #x
 
@@ -32,17 +34,30 @@ Gcc_PRINTF(1, 2)
 Gcc_NORETURN
 void Assert_failure(const char* format, ...);
 
-/** Runtime assertion which is always applied. */
-#define Assert_always(expr) do { \
-        if (!(expr)) {                                                                \
-            Assert_failure("Assertion failure [%s:%d] [%s]\n", __FILE__, __LINE__,    \
-                           #expr);                                                    \
-        }                                                                             \
+#define Assert_fileLine(expr, file, line) do { \
+        if (!(expr)) {                                                                   \
+            Assert_failure("Assertion failure [%s:%d] [%s]\n", (file), (line),           \
+                           #expr);                                                       \
+        }                                                                                \
     } while (0)
 /* CHECKFILES_IGNORE a ; is expected after the while(0) but it will be supplied by the caller */
 
+
+/** Runtime assertion which is always applied. */
+#define Assert_true(expr) Assert_fileLine((expr), Gcc_SHORT_FILE, Gcc_LINE)
+
 #ifdef PARANOIA
-    #define Assert_true(expr) Assert_always(expr)
+    #define Assert_ifParanoid(expr) Assert_true(expr)
+#else
+    #define Assert_ifParanoid(expr) do { } while (0)
+/* CHECKFILES_IGNORE a ; is expected after the while(0) but it will be supplied by the caller */
+#endif
+
+#ifdef TESTING
+    #define Assert_ifTesting(expr) Assert_true(expr)
+#else
+    #define Assert_ifTesting(expr) do { } while (0)
+/* CHECKFILES_IGNORE a ; is expected after the while(0) but it will be supplied by the caller */
 #endif
 
 #endif

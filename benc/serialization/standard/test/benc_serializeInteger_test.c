@@ -12,8 +12,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#define string_strcmp
-#include "util/platform/libc/string.h"
 #include "memory/Allocator.h"
 #include "memory/MallocAllocator.h"
 #include "io/Reader.h"
@@ -23,22 +21,23 @@
 #include "benc/Object.h"
 #include "benc/serialization/BencSerializer.h"
 #include "benc/serialization/standard/StandardBencSerializer.h"
+#include "util/CString.h"
 
 #include <stdio.h>
 
-int expect(char* str, struct Writer* writer, struct Reader* reader, int ret)
+static int expect(char* str, struct Writer* writer, struct Reader* reader, int ret)
 {
     char buffer[32];
     Writer_write(writer, "\0", 1);
-    Reader_read(reader, buffer, strlen(str) + 1);
-    if (strcmp(str, buffer) != 0) {
+    Reader_read(reader, buffer, CString_strlen(str) + 1);
+    if (CString_strcmp(str, buffer) != 0) {
         printf("Expected %s\n Got %s\n", str, buffer);
         return -1;
     }
     return ret;
 }
 
-int testSerialize(struct Writer* writer, struct Reader* reader)
+static int testSerialize(struct Writer* writer, struct Reader* reader)
 {
     int ret = 0;
 

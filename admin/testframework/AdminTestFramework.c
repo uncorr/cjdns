@@ -24,7 +24,6 @@
 #include "crypto/random/Random.h"
 #include "memory/Allocator.h"
 #include "memory/MallocAllocator.h"
-#include "memory/BufferAllocator.h"
 #include "interface/FramingInterface.h"
 #include "interface/addressable/UDPAddrInterface.h"
 #include "io/ArrayReader.h"
@@ -37,23 +36,22 @@
 #include "util/Assert.h"
 #include "util/log/Log.h"
 #include "util/log/WriterLog.h"
-#define string_strlen
-#define string_strchr
-#define string_strcmp
-#include "util/platform/libc/string.h"
 
 #include <unistd.h>
 #include <stdlib.h>
 
-static void spawnAngel(char* asClientPipeName, struct EventBase* base, struct Allocator* alloc)
+static void spawnAngel(char* testName,
+                       char* asClientPipeName,
+                       struct EventBase* base,
+                       struct Allocator* alloc)
 {
-    char* args[] = { "angel", asClientPipeName, NULL };
+    char* args[] = { testName, "angel", asClientPipeName, NULL };
 
-    uint8_t allocBuff[1024];
-    struct Allocator* tempAlloc = BufferAllocator_new(allocBuff, 1024);
+    struct Allocator* tempAlloc = Allocator_child(alloc);
     char* path = Process_getPath(tempAlloc);
     Assert_true(path);
     Process_spawn(path, args, base, alloc);
+    Allocator_free(tempAlloc);
 }
 
 /** @return a string representing the address and port to connect to. */
@@ -93,11 +91,11 @@ static void initAngel(struct Pipe* asClientPipe,
     Interface_sendMessage(&asClientPipe->iface, toAngel);
 
     // This is client->angel->core data, we can throw this away.
-    struct Message* angelToCore =
-        InterfaceWaiter_waitForData(asCoreIface, eventBase, tempAlloc, NULL);
+    //struct Message* angelToCore =
+    InterfaceWaiter_waitForData(asCoreIface, eventBase, tempAlloc, NULL);
 
     // unterminated string
-    Log_info(logger, "Init message from angel to core: [%s]", angelToCore->bytes);
+    //Log_info(logger, "Init message from angel to core: [%s]", angelToCore->bytes);
 
     // Send response on behalf of core.
     char* coreToAngelResponse = "        PADDING         "
@@ -107,11 +105,11 @@ static void initAngel(struct Pipe* asClientPipe,
 
     struct Message* m = &(struct Message) {
         .bytes = (uint8_t*) coreToAngelResponse,
-        .length = strlen(coreToAngelResponse),
+        .length = CString_strlen(coreToAngelResponse),
         .padding = 0,
-        .capacity = strlen(coreToAngelResponse)
+        .capacity = CString_strlen(coreToAngelResponse)
     };
-    Message_shift(m, -24);
+    Message_shift(m, -24, NULL);
     m = Message_clone(m, tempAlloc);
 
     Interface_sendMessage(asCoreIface, m);
@@ -132,16 +130,16 @@ static void initAngel(struct Pipe* asClientPipe,
  * The "core process" pipes all of its inputs back to the originating process
  */
 
-struct AdminTestFramework* AdminTestFramework_setUp(int argc, char** argv)
+struct AdminTestFramework* AdminTestFramework_setUp(int argc, char** argv, char* testName)
 {
-    if (argc > 1 && !strcmp("angel", argv[1])) {
-        exit(AngelInit_main(argc, argv));
+    if (argc > 2 && !CString_strcmp(testName, argv[1]) && !CString_strcmp("angel", argv[2])) {
+        exit(AngelInit_main(argc-1, &argv[1]));
     }
 
     struct Allocator* alloc = MallocAllocator_new(1<<20);
 
     struct Writer* logwriter = FileWriter_new(stdout, alloc);
-    Assert_always(logwriter);
+    Assert_true(logwriter);
     struct Log* logger = WriterLog_new(logwriter, alloc);
 
     struct EventBase* eventBase = EventBase_new(alloc);
@@ -159,13 +157,13 @@ struct AdminTestFramework* AdminTestFramework_setUp(int argc, char** argv)
     asCorePipe->logger = logger;
     struct Interface* asCoreIface = FramingInterface_new(65535, &asCorePipe->iface, alloc);
 
-    spawnAngel(asClientPipeName, eventBase, alloc);
+    spawnAngel(testName, asClientPipeName, eventBase, alloc);
 
     Log_info(logger, "Initializing Angel");
     initAngel(asClientPipe, asCoreIface, (char*)asCorePipe->name, eventBase, logger, alloc, rand);
 
     struct Sockaddr_storage addr;
-    Assert_true(!Sockaddr_parse("0.0.0.0", &addr));
+    Assert_true(!Sockaddr_parse("127.0.0.1", &addr));
 
     Log_info(logger, "Binding UDP admin socket");
     struct AddrInterface* udpAdmin =
@@ -179,7 +177,7 @@ struct AdminTestFramework* AdminTestFramework_setUp(int argc, char** argv)
     struct AdminClient* client =
         AdminClient_new(udpAdmin->addr, password, eventBase, logger, alloc);
 
-    Assert_always(client);
+    Assert_true(client);
 
     return Allocator_clone(alloc, (&(struct AdminTestFramework) {
         .admin = admin,
@@ -199,10 +197,10 @@ void AdminTestFramework_tearDown(struct AdminTestFramework* framework)
           "1:q" "10:Angel_exit"
         "e";
 
-    char* start = strchr(buff, 'd');
+    char* start = CString_strchr(buff, 'd');
     struct Message m = {
         .bytes = (uint8_t*) start,
-        .length = strlen(start),
+        .length = CString_strlen(start),
         .padding = start - buff
     };
     struct Message* mp = Message_clone(&m, framework->alloc);

@@ -12,7 +12,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include "util/platform/libc/string.h"
 
 #include "dht/CJDHTConstants.h"
 #include "dht/DHTMessage.h"
@@ -63,7 +62,8 @@ static int handleIncoming(struct DHTMessage* message, void* vcontext)
     struct DHTMessage* reply = Allocator_clone(message->allocator, (&(struct DHTMessage) {
         .replyTo = message,
         .address = message->address,
-        .allocator = message->allocator
+        .allocator = message->allocator,
+        .binMessage = message->binMessage
     }));
 
     DHTModuleRegistry_handleOutgoing(reply, registry);

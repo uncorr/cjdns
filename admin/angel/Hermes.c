@@ -14,6 +14,7 @@
  */
 #include "admin/angel/Hermes.h"
 #include "benc/Dict.h"
+#include "benc/String.h"
 #include "benc/serialization/BencSerializer.h"
 #include "benc/serialization/standard/StandardBencSerializer.h"
 #include "memory/Allocator.h"
@@ -59,8 +60,8 @@ struct Hermes
 /** Called when the request allocator is freed. */
 static int removeReqFromSet(struct Allocator_OnFreeJob* job)
 {
-    struct Request* req = Identity_cast((struct Request*) job->userData);
-    struct Hermes* h = Identity_cast(req->hermes);
+    struct Request* req = Identity_check((struct Request*) job->userData);
+    struct Hermes* h = Identity_check(req->hermes);
     int index = Map_RequestSet_indexForHandle(req->handle, &h->requestSet);
     if (index > -1) {
         Map_RequestSet_remove(index, &h->requestSet);
@@ -72,7 +73,7 @@ static int removeReqFromSet(struct Allocator_OnFreeJob* job)
 
 static void timeout(void* vrequest)
 {
-    struct Request* req = Identity_cast((struct Request*) vrequest);
+    struct Request* req = Identity_check((struct Request*) vrequest);
     Dict resp = Dict_CONST(String_CONST("error"), String_OBJ(String_CONST("timeout")), NULL);
     req->onResponse(&resp, req->onResponseContext);
     Allocator_free(req->alloc);
@@ -110,14 +111,14 @@ static void receiveMessage2(struct Message* msg, struct Hermes* hermes, struct A
         return;
     }
 
-    struct Request* req = Identity_cast((struct Request*) hermes->requestSet.values[index]);
+    struct Request* req = Identity_check((struct Request*) hermes->requestSet.values[index]);
     req->onResponse(&d, req->onResponseContext);
     Allocator_free(req->alloc);
 }
 
 static uint8_t receiveMessage(struct Message* msg, struct Interface* iface)
 {
-    struct Hermes* hermes = Identity_cast((struct Hermes*) iface->receiverContext);
+    struct Hermes* hermes = Identity_check((struct Hermes*) iface->receiverContext);
     struct Allocator* alloc = Allocator_child(hermes->alloc);
     receiveMessage2(msg, hermes, alloc);
     Allocator_free(alloc);
@@ -161,7 +162,7 @@ void Hermes_callAngel(Dict* message,
 
     struct Writer* writer = ArrayWriter_new(buff.message, BUFF_SIZE, reqAlloc);
     if (StandardBencSerializer_get()->serializeDictionary(writer, message)) {
-        Except_raise(eh, Hermes_callAngel_ESERIALIZE, "Failed to serialize message");
+        Except_throw(eh, "Failed to serialize message");
     }
 
     // Remove the txid string so there is not a dangling pointer in the message.
@@ -174,7 +175,7 @@ void Hermes_callAngel(Dict* message,
         .padding = 0
     };
     m->capacity = m->length;
-    Message_shift(m, -PADDING);
+    Message_shift(m, -PADDING, NULL);
 
     Log_debug(hermes->logger, "Sending [%d] bytes to angel [%s].", m->length, m->bytes);
 
@@ -182,7 +183,7 @@ void Hermes_callAngel(Dict* message,
 
     int ret = Interface_sendMessage(hermes->iface, m);
     if (ret) {
-        Except_raise(eh, Hermes_callAngel_ESEND, "Failed to send message to angel [%d]", ret);
+        Except_throw(eh, "Failed to send message to angel [%d]", ret);
     }
 
     // Use interval as defensive programming

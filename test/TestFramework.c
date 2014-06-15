@@ -14,7 +14,10 @@
  */
 #include "crypto/random/Random.h"
 #include "crypto/CryptoAuth.h"
+#include "crypto/AddressCalc.h"
 #include "dht/ReplyModule.h"
+#include "dht/dhtcore/RouterModule.h"
+#include "dht/dhtcore/SearchRunner.h"
 #include "dht/SerializationModule.h"
 #include "io/Writer.h"
 #include "io/FileWriter.h"
@@ -26,7 +29,7 @@
 #include "util/log/WriterLog.h"
 #include "util/events/EventBase.h"
 #include "net/SwitchPinger.h"
-#include "net/DefaultInterfaceController.h"
+#include "interface/InterfaceController.h"
 
 #include "crypto_scalarmult_curve25519.h"
 
@@ -42,7 +45,7 @@ struct TestFramework_Link
 static uint8_t sendTo(struct Message* msg, struct Interface* iface)
 {
     struct TestFramework_Link* link =
-        Identity_cast((struct TestFramework_Link*)iface->senderContext);
+        Identity_check((struct TestFramework_Link*)iface->senderContext);
 
     struct Interface* dest;
     struct TestFramework* srcTf;
@@ -53,7 +56,7 @@ static uint8_t sendTo(struct Message* msg, struct Interface* iface)
         dest = &link->destIf;
         srcTf = link->src;
     } else {
-        Assert_always(false);
+        Assert_true(false);
     }
 
     printf("Transferring message to [%p] - message length [%d]\n", (void*)dest, msg->length);
@@ -93,8 +96,9 @@ struct TestFramework* TestFramework_setUp(char* privateKey,
     uint8_t* publicKey = Allocator_malloc(allocator, 32);
     crypto_scalarmult_curve25519_base(publicKey, (uint8_t*)privateKey);
 
-    uint8_t* ip = Allocator_malloc(allocator, 16);
-    AddressCalc_addressForPublicKey(ip, publicKey);
+    struct Address* myAddress = Allocator_calloc(allocator, sizeof(struct Address), 1);
+    Bits_memcpyConst(myAddress->key, publicKey, 32);
+    AddressCalc_addressForPublicKey(myAddress->ip6.bytes, publicKey);
 
     struct SwitchCore* switchCore = SwitchCore_new(logger, allocator);
     struct CryptoAuth* ca = CryptoAuth_new(allocator, (uint8_t*)privateKey, base, logger, rand);
@@ -102,29 +106,36 @@ struct TestFramework* TestFramework_setUp(char* privateKey,
     struct DHTModuleRegistry* registry = DHTModuleRegistry_new(allocator);
     ReplyModule_register(registry, allocator);
 
+    struct RumorMill* rumorMill = RumorMill_new(allocator, myAddress, 64);
+
+    struct NodeStore* nodeStore = NodeStore_new(myAddress, allocator, logger, rumorMill);
+
     struct RouterModule* routerModule =
-        RouterModule_register(registry, allocator, publicKey, base, logger, NULL, rand);
+        RouterModule_register(registry, allocator, publicKey, base, logger, rand, nodeStore);
+
+    struct SearchRunner* searchRunner = SearchRunner_new(nodeStore,
+                                                         logger,
+                                                         base,
+                                                         routerModule,
+                                                         myAddress->ip6.bytes,
+                                                         rumorMill,
+                                                         allocator);
 
     SerializationModule_register(registry, logger, allocator);
 
     struct IpTunnel* ipTun = IpTunnel_new(logger, base, allocator, rand, NULL);
 
     struct Ducttape* dt =
-        Ducttape_register((uint8_t*)privateKey, registry, routerModule,
-                          switchCore, base, allocator, logger, NULL, ipTun, rand);
+        Ducttape_register((uint8_t*)privateKey, registry, routerModule, searchRunner,
+                          switchCore, base, allocator, logger, ipTun, rand);
 
-    struct SwitchPinger* sp = SwitchPinger_new(&dt->switchPingerIf, base, rand, logger, allocator);
+    struct SwitchPinger* sp =
+        SwitchPinger_new(&dt->switchPingerIf, base, rand, logger, myAddress, allocator);
 
     // Interfaces.
     struct InterfaceController* ifController =
-        DefaultInterfaceController_new(ca,
-                                       switchCore,
-                                       routerModule,
-                                       logger,
-                                       base,
-                                       sp,
-                                       rand,
-                                       allocator);
+        InterfaceController_new(ca, switchCore, routerModule, rumorMill,
+                                logger, base, sp, rand, allocator);
 
     struct TestFramework* tf = Allocator_clone(allocator, (&(struct TestFramework) {
         .alloc = allocator,
@@ -138,7 +149,7 @@ struct TestFramework* TestFramework_setUp(char* privateKey,
         .switchPinger = sp,
         .ifController = ifController,
         .publicKey = publicKey,
-        .ip = ip
+        .ip = myAddress->ip6.bytes
     }));
 
     Identity_set(tf);
@@ -153,9 +164,9 @@ void TestFramework_assertLastMessageUnaltered(struct TestFramework* tf)
     }
     struct Message* a = tf->lastMsg;
     struct Message* b = tf->lastMsgBackup;
-    Assert_always(a->length == b->length);
-    Assert_always(a->padding == b->padding);
-    Assert_always(!Bits_memcmp(a->bytes, b->bytes, a->length));
+    Assert_true(a->length == b->length);
+    Assert_true(a->padding == b->padding);
+    Assert_true(!Bits_memcmp(a->bytes, b->bytes, a->length));
 }
 
 void TestFramework_linkNodes(struct TestFramework* client, struct TestFramework* server)
@@ -197,7 +208,7 @@ void TestFramework_linkNodes(struct TestFramework* client, struct TestFramework*
 
 void TestFramework_craftIPHeader(struct Message* msg, uint8_t srcAddr[16], uint8_t destAddr[16])
 {
-    Message_shift(msg, Headers_IP6Header_SIZE);
+    Message_shift(msg, Headers_IP6Header_SIZE, NULL);
     struct Headers_IP6Header* ip = (struct Headers_IP6Header*) msg->bytes;
 
     ip->versionClassAndFlowLabel = 0;

@@ -15,15 +15,14 @@
 #ifndef String_H
 #define String_H
 
+#include "benc/Object.h"
 #include "memory/Allocator.h"
-#include "util/platform/libc/strlen.h"
+#include "util/CString.h"
+#include "util/Linker.h"
+Linker_require("benc/String.c")
 
 #include <stdbool.h>
-
-typedef struct {
-    unsigned long len;
-    char* bytes;
-} String;
+#include <stddef.h> // NULL
 
 /**
  * Create a new bencoded string from a C null terminated string.
@@ -38,7 +37,7 @@ String* String_new(const char* bytes, struct Allocator* allocator);
 /**
  * Create a new bencoded constant string on the stack.
  */
-#define String_CONST(x) (&(String) { .bytes = x, .len = strlen(x) })
+#define String_CONST(x) (&(String) { .bytes = x, .len = CString_strlen(x) })
 
 /** For use outside of functions with compile time constant strings. */
 #define String_CONST_SO(x) (&(String) { .bytes = x, .len = sizeof(x) - 1 })

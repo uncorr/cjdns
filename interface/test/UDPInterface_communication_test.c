@@ -12,8 +12,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#define string_strcmp
-#define string_strlen
 #include "admin/testframework/AdminTestFramework.h"
 #include "admin/Admin.h"
 #include "admin/AdminClient.h"
@@ -29,7 +27,6 @@
 #include "util/Assert.h"
 #include "util/log/Log.h"
 #include "util/log/WriterLog.h"
-#include "util/platform/libc/string.h"
 #include "util/events/Timeout.h"
 
 #include <stdlib.h>
@@ -79,9 +76,7 @@ int main(int argc, char** argv)
     struct Log* logger = WriterLog_new(logWriter, alloc);
 
     // mock interface controller.
-    struct InterfaceController ic = {
-        .registerPeer = registerPeer
-    };
+    struct InterfaceController ic = { .registerPeer = registerPeer };
 
     struct Sockaddr_storage addr;
     Assert_true(!Sockaddr_parse("127.0.0.1", &addr));
@@ -92,8 +87,8 @@ int main(int argc, char** argv)
     struct Message* msg;
     Message_STACK(msg, 0, 128);
 
-    Message_push(msg, "Hello World", 12);
-    Message_push(msg, udpA->addr, udpA->addr->addrLen);
+    Message_push(msg, "Hello World", 12, NULL);
+    Message_push(msg, udpA->addr, udpA->addr->addrLen, NULL);
 
     struct Interface* ifA = &((struct UDPInterface_pvt*) udpA)->udpBase->generic;
     struct Interface* ifB = &((struct UDPInterface_pvt*) udpB)->udpBase->generic;
@@ -110,4 +105,5 @@ int main(int argc, char** argv)
     Timeout_setTimeout(fail, NULL, 1000, base, alloc);
 
     EventBase_beginLoop(base);
+    return 0;
 }

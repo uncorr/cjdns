@@ -19,6 +19,7 @@
 #include "dht/Address.h"
 #include "net/SwitchPinger.h"
 #include "util/Endian.h"
+#include "util/AddrTools.h"
 
 #define DEFAULT_TIMEOUT 2000
 
@@ -72,7 +73,7 @@ static void adminPingOnResponse(enum SwitchPinger_Result result,
     Admin_sendMessage(&response, ping->txid, ping->context->admin);
 }
 
-static void adminPing(Dict* args, void* vcontext, String* txid)
+static void adminPing(Dict* args, void* vcontext, String* txid, struct Allocator* requestAlloc)
 {
     struct Context* context = vcontext;
     String* pathStr = Dict_getString(args, String_CONST("path"));
@@ -98,7 +99,6 @@ static void adminPing(Dict* args, void* vcontext, String* txid)
                 .txid = String_clone(txid, ping->pingAlloc),
                 .path = String_clone(pathStr, ping->pingAlloc)
             }));
-            SwitchPinger_sendPing(ping);
         }
     }
 

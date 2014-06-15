@@ -12,18 +12,13 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#define string_strlen
-
-#include "benc/Int.h"
-#include "crypto/AddressCalc.h"
+#include "benc/String.h"
 #include "dht/Address.h"
-#include "dht/dhtcore/Janitor.h"
+#include "dht/dhtcore/RouterModule.h"
 #include "dht/dhtcore/RouterModule_pvt.h"
 #include "dht/dhtcore/Node.h"
 #include "dht/dhtcore/NodeList.h"
 #include "dht/dhtcore/NodeStore.h"
-#include "dht/dhtcore/SearchRunner.h"
-#include "dht/dhtcore/RouteTracer.h"
 #include "dht/dhtcore/VersionList.h"
 #include "dht/CJDHTConstants.h"
 #include "dht/DHTMessage.h"
@@ -31,20 +26,18 @@
 #include "dht/DHTModuleRegistry.h"
 #include "util/log/Log.h"
 #include "memory/Allocator.h"
-#include "memory/BufferAllocator.h"
 #include "switch/LabelSplicer.h"
+#include "switch/NumberCompress.h"
 #include "util/events/EventBase.h"
 #include "util/AverageRoller.h"
 #include "util/Bits.h"
+#include "util/Hex.h"
 #include "util/Endian.h"
 #include "util/Pinger.h"
 #include "util/events/Time.h"
 #include "util/events/Timeout.h"
 #include "util/version/Version.h"
-#include "util/platform/libc/string.h"
-
-#include <stdint.h>
-#include <stdbool.h>
+#include "wire/Message.h"
 
 /*
  * The router module is the central part of the DHT engine.
@@ -89,7 +82,7 @@
  * this operation is performed periodicly every LOCAL_MAINTENANCE_SEARCH_MILLISECONDS unless
  * a local maintainence search is being run which is not often once the network is stable.
  *
- * TODO ---
+ * TODO(cjd): ---
  * In order to have the nodes with least distance:reach ratio ready to handle any incoming search,
  * we precompute the borders where the "best next node" changes. This computation is best understood
  * by graphing the nodes with their location in keyspace on the X axis and their reach on the Y
@@ -204,6 +197,7 @@ static int handleOutgoing(struct DHTMessage* message, void* vcontext);
  * @param registry the DHT module registry for signal handling.
  * @param allocator a means to allocate memory.
  * @param myAddress the address for this DHT node.
+ * @param nodeStore the place to put the nodes
  * @return the RouterModule.
  */
 struct RouterModule* RouterModule_register(struct DHTModuleRegistry* registry,
@@ -211,8 +205,8 @@ struct RouterModule* RouterModule_register(struct DHTModuleRegistry* registry,
                                            const uint8_t myAddress[Address_KEY_SIZE],
                                            struct EventBase* eventBase,
                                            struct Log* logger,
-                                           struct Admin* admin,
-                                           struct Random* rand)
+                                           struct Random* rand,
+                                           struct NodeStore* nodeStore)
 {
     struct RouterModule* const out = Allocator_calloc(allocator, sizeof(struct RouterModule), 1);
 
@@ -224,35 +218,17 @@ struct RouterModule* RouterModule_register(struct DHTModuleRegistry* registry,
     }));
     DHTModuleRegistry_register(dm, registry);
 
-    Hex_decode(out->gitVersionBytes, 20, Version_gitVersion(), 40);
-    out->gitVersion.len = 20;
-    out->gitVersion.bytes = (char*) out->gitVersionBytes;
-
     Address_forKey(&out->address, myAddress);
 
     out->gmrtRoller = AverageRoller_new(GMRT_SECONDS, eventBase, allocator);
     AverageRoller_update(out->gmrtRoller, GMRT_INITAL_MILLISECONDS);
-    out->nodeStore = NodeStore_new(&out->address, NODE_STORE_SIZE, allocator, logger, rand, admin);
+    out->nodeStore = nodeStore;
     out->registry = registry;
     out->eventBase = eventBase;
     out->logger = logger;
     out->allocator = allocator;
-    out->admin = admin;
     out->rand = rand;
     out->pinger = Pinger_new(eventBase, rand, logger, allocator);
-    out->janitor = Janitor_new(LOCAL_MAINTENANCE_SEARCH_MILLISECONDS,
-                               GLOBAL_MAINTENANCE_SEARCH_MILLISECONDS,
-                               out,
-                               out->nodeStore,
-                               logger,
-                               allocator,
-                               eventBase,
-                               rand);
-    out->searchRunner =
-        SearchRunner_new(out->nodeStore, logger, eventBase, out, out->address.ip6.bytes, allocator);
-
-    out->routeTracer =
-        RouteTracer_new(out->nodeStore, out, myAddress, eventBase, logger, allocator);
 
     Identity_set(out);
     return out;
@@ -272,42 +248,19 @@ uint64_t RouterModule_searchTimeoutMilliseconds(struct RouterModule* module)
     return (x > MAX_TIMEOUT) ? MAX_TIMEOUT : (x < MIN_TIMEOUT) ? MIN_TIMEOUT : x;
 }
 
-static uint32_t reachAfterTimeout(const uint32_t oldReach)
-{
-    switch (oldReach) {
-        case 2: return 1;
-        case 1:
-        case 0: return 0;
-        default: return oldReach / 2 + 2;
-    }
-}
-
-static inline void responseFromNode(struct Node* node,
-                                    uint32_t millisecondsSinceRequest,
-                                    struct RouterModule* module)
-{
-    if (node) {
-        uint64_t worst = RouterModule_searchTimeoutMilliseconds(module);
-        if (worst > millisecondsSinceRequest) {
-            node->reach = (worst - millisecondsSinceRequest)  * LINK_STATE_MULTIPLIER;
-            NodeStore_updateReach(node, module->nodeStore);
-        }
-    }
-}
-
 static inline int sendNodes(struct NodeList* nodeList,
                             struct DHTMessage* message,
-                            struct RouterModule* module)
+                            struct RouterModule* module,
+                            uint32_t askerVersion)
 {
     struct DHTMessage* query = message->replyTo;
-    String* nodes = Allocator_malloc(message->allocator, sizeof(String));
-    nodes->len = nodeList->size * Address_SERIALIZED_SIZE;
-    nodes->bytes = Allocator_malloc(message->allocator, nodeList->size * Address_SERIALIZED_SIZE);
+    String* nodes =
+        String_newBinary(NULL, nodeList->size * Address_SERIALIZED_SIZE, message->allocator);
 
     struct VersionList* versions = VersionList_new(nodeList->size, message->allocator);
 
-    uint32_t i;
-    for (i = 0; i < nodeList->size; i++) {
+    int i = 0;
+    for (; i < (int)nodeList->size; i++) {
 
         // We have to modify the reply in case this node uses a longer label discriminator
         // in our switch than its target address, the target address *must* have the same
@@ -317,10 +270,15 @@ static inline int sendNodes(struct NodeList* nodeList,
 
         addr.path = LabelSplicer_getLabelFor(addr.path, query->address->path);
 
-        Address_serialize((uint8_t*) &nodes->bytes[i * Address_SERIALIZED_SIZE], &addr);
+        Address_serialize(&nodes->bytes[i * Address_SERIALIZED_SIZE], &addr);
 
-        versions->versions[i] = nodeList->nodes[i]->version;
+        versions->versions[i] = nodeList->nodes[i]->address.protocolVersion;
+
+        Assert_ifParanoid(!Bits_isZero(&nodes->bytes[i * Address_SERIALIZED_SIZE],
+                                       Address_SERIALIZED_SIZE));
     }
+    nodes->len = i * Address_SERIALIZED_SIZE;
+    versions->length = i;
     if (i > 0) {
         Dict_putString(message->asDict, CJDHTConstants_NODES, nodes, message->allocator);
         String* versionsStr = VersionList_stringify(versions, message->allocator);
@@ -350,9 +308,6 @@ static inline int handleQuery(struct DHTMessage* message,
     int64_t* versionPtr = Dict_getInt(query->asDict, CJDHTConstants_PROTOCOL);
     uint32_t version = (versionPtr && *versionPtr <= UINT32_MAX) ? *versionPtr : 0;
 
-    // We got a query, the reach should be set to 1 in the new node.
-    NodeStore_addNode(module->nodeStore, query->address, 1, version);
-
     struct NodeList* nodeList = NULL;
 
     String* queryType = Dict_getString(query->asDict, CJDHTConstants_QUERY);
@@ -363,15 +318,13 @@ static inline int handleQuery(struct DHTMessage* message,
             return 0;
         }
 
-        struct Address targetAddr;
+        struct Address targetAddr = { .path = 0 };
         Bits_memcpyConst(targetAddr.ip6.bytes, target->bytes, Address_SEARCH_TARGET_SIZE);
 
         // send the closest nodes
         nodeList = NodeStore_getClosestNodes(module->nodeStore,
                                              &targetAddr,
-                                             query->address,
-                                             RouterModule_K + 5,
-                                             false,
+                                             RouterModule_K,
                                              version,
                                              message->allocator);
 
@@ -388,15 +341,9 @@ static inline int handleQuery(struct DHTMessage* message,
         nodeList =
             NodeStore_getPeers(targetPath, RouterModule_K, message->allocator, module->nodeStore);
 
-    } else {
-        // Treat as a ping, tell them our version
-        Dict_putString(message->asDict,
-                       CJDHTConstants_VERSION,
-                       &module->gitVersion,
-                       message->allocator);
     }
 
-    return (nodeList) ? sendNodes(nodeList, message, module) : 0;
+    return (nodeList) ? sendNodes(nodeList, message, module, version) : 0;
 }
 
 /**
@@ -408,7 +355,7 @@ static inline int handleQuery(struct DHTMessage* message,
  */
 static int handleOutgoing(struct DHTMessage* message, void* vcontext)
 {
-    struct RouterModule* module = Identity_cast((struct RouterModule*) vcontext);
+    struct RouterModule* module = Identity_check((struct RouterModule*) vcontext);
 
     Dict_putInt(message->asDict,
                 CJDHTConstants_PROTOCOL,
@@ -444,50 +391,29 @@ struct PingContext
 
 static void sendMsg(String* txid, void* vpingContext)
 {
-    struct PingContext* pc = Identity_cast((struct PingContext*) vpingContext);
+    struct PingContext* pc = Identity_check((struct PingContext*) vpingContext);
 
     // "t":"1234"
     Dict_putString(pc->messageDict, CJDHTConstants_TXID, txid, pc->pp->pingAlloc);
 
-    struct DHTMessage message = {
-        .address = &pc->address,
-        .asDict = pc->messageDict,
-        .allocator = pc->pp->pingAlloc
-    };
+    struct Allocator* temp = Allocator_child(pc->pp->pingAlloc);
+    struct Message* msg = Message_new(0, DHTMessage_MAX_SIZE + 512, temp);
+    struct DHTMessage* dmesg = Allocator_calloc(temp, sizeof(struct DHTMessage), 1);
+    dmesg->binMessage = msg;
+    dmesg->address = &pc->address;
+    dmesg->asDict = pc->messageDict;
+    dmesg->allocator = temp;
 
-    DHTModuleRegistry_handleOutgoing(&message, pc->router->registry);
+    DHTModuleRegistry_handleOutgoing(dmesg, pc->router->registry);
 }
 
 static void onTimeout(uint32_t milliseconds, struct PingContext* pctx)
 {
-    struct Node* n = NodeStore_getNodeByNetworkAddr(pctx->address.path, pctx->router->nodeStore);
+    struct Node_Two* n = NodeStore_closestNode(pctx->router->nodeStore, pctx->address.path);
 
     // Ping timeout -> decrease reach
-    if (n) {
-
-        uint32_t newReach = reachAfterTimeout(n->reach);
-
-        #ifdef Log_DEBUG
-            uint8_t addr[60];
-            Address_print(addr, &n->address);
-            Log_debug(pctx->router->logger,
-                       "Ping timeout for %s, after %lums. changing reach from %u to %u\n",
-                       addr,
-                       (unsigned long)milliseconds,
-                       n->reach,
-                       newReach);
-        #endif
-
-        n->reach = newReach;
-
-        if (newReach == 0 && LabelSplicer_isOneHop(n->address.path)) {
-            // If the node is directly connected, don't allow the reach to be zeroed
-            // because because the node is being periodically pinged at the switch level
-            // if the link is broken, the node will be zeroed anyway.
-            n->reach++;
-        }
-
-        NodeStore_updateReach(n, pctx->router->nodeStore);
+    if (n && !Bits_memcmp(pctx->address.key, n->address.key, 32)) {
+        NodeStore_pathTimeout(pctx->router->nodeStore, pctx->address.path);
     }
 
     if (pctx->pub.callback) {
@@ -513,7 +439,7 @@ static int handleIncoming(struct DHTMessage* message, void* vcontext)
         return 0;
     }
 
-    struct RouterModule* module = Identity_cast((struct RouterModule*) vcontext);
+    struct RouterModule* module = Identity_check((struct RouterModule*) vcontext);
 
     // This is retreived below by onResponseOrTimeout()
     module->currentMessage = message;
@@ -526,7 +452,7 @@ static int handleIncoming(struct DHTMessage* message, void* vcontext)
 // ping or search response came in
 static void onResponseOrTimeout(String* data, uint32_t milliseconds, void* vping)
 {
-    struct PingContext* pctx = Identity_cast((struct PingContext*) vping);
+    struct PingContext* pctx = Identity_check((struct PingContext*) vping);
 
     if (data == NULL) {
         // This is how Pinger signals a timeout.
@@ -558,28 +484,37 @@ static void onResponseOrTimeout(String* data, uint32_t milliseconds, void* vping
 
     // update the GMRT
     AverageRoller_update(pctx->router->gmrtRoller, milliseconds);
+    /*
     Log_debug(pctx->router->logger,
                "Received response in %u milliseconds, gmrt now %u\n",
                milliseconds,
                AverageRoller_getAverage(pctx->router->gmrtRoller));
+    */
 
-    // If we get a reply from a node which is not in our table
-    // it probably means that we just flushed them from the table because
-    // a node further up the tree has become unresponsive.
-    // ignore their message because it would add orphaned entries to the node tree.
-    struct Node* node = NodeStore_getNodeByNetworkAddr(message->address->path, module->nodeStore);
-    if (!node || Bits_memcmp(node->address.key, message->address->key, 32)) {
-        return;
+    // prevent division by zero
+    if (milliseconds == 0) { milliseconds++; }
+
+    struct Node_Two* node = NodeStore_closestNode(module->nodeStore, message->address->path);
+    if (node && !Bits_memcmp(node->address.key, message->address->key, 32)) {
+        NodeStore_pathResponse(module->nodeStore, message->address->path, milliseconds);
+    } else {
+        struct Node_Link* link = NodeStore_discoverNode(module->nodeStore,
+                                                        message->address,
+                                                        message->encodingScheme,
+                                                        message->encIndex,
+                                                        milliseconds);
+        node = (link) ? link->child : NULL;
     }
 
-    int64_t* versionPtr = Dict_getInt(message->asDict, CJDHTConstants_PROTOCOL);
-    uint32_t version = ((versionPtr) ? *versionPtr : 0);
-
-    // this implementation only pings to get the address of a node, so lets add the node.
-    node = NodeStore_addNode(module->nodeStore, message->address, 2, version);
-
-    Assert_true(node);
-    responseFromNode(node, milliseconds, module);
+    // EncodingSchemeModule should have added this node to the store, check it.
+    if (!node) {
+        #ifdef Log_DEBUG
+            uint8_t printedAddr[60];
+            Address_print(printedAddr, message->address);
+            Log_info(module->logger, "Got message from nonexistant node! [%s]\n", printedAddr);
+        #endif
+        return;
+    }
 
     #ifdef Log_DEBUG
         String* versionBin = Dict_getString(message->asDict, CJDHTConstants_VERSION);
@@ -595,15 +530,23 @@ static void onResponseOrTimeout(String* data, uint32_t milliseconds, void* vping
     #endif
 
     if (pctx->pub.callback) {
-        pctx->pub.callback(&pctx->pub, milliseconds, node, message->asDict);
+        pctx->pub.callback(&pctx->pub, milliseconds, message->address, message->asDict);
     }
 }
 
-struct RouterModule_Promise* RouterModule_newMessage(struct Node* node,
+struct RouterModule_Promise* RouterModule_newMessage(struct Address* addr,
                                                      uint32_t timeoutMilliseconds,
                                                      struct RouterModule* module,
                                                      struct Allocator* alloc)
 {
+    // sending yourself a ping?
+//    Assert_true(Bits_memcmp(addr->key, module->address.key, 32));
+
+    Assert_ifParanoid(addr->path ==
+        EncodingScheme_convertLabel(module->nodeStore->selfNode->encodingScheme,
+                                    addr->path,
+                                    EncodingScheme_convertLabel_convertTo_CANNONICAL));
+
     if (timeoutMilliseconds == 0) {
         timeoutMilliseconds = pingTimeoutMilliseconds(module);
     }
@@ -623,7 +566,7 @@ struct RouterModule_Promise* RouterModule_newMessage(struct Node* node,
         .pp = pp
     }));
     Identity_set(pctx);
-    Bits_memcpyConst(&pctx->address, &node->address, sizeof(struct Address));
+    Bits_memcpyConst(&pctx->address, addr, sizeof(struct Address));
 
     pp->context = pctx;
 
@@ -632,67 +575,97 @@ struct RouterModule_Promise* RouterModule_newMessage(struct Node* node,
 
 void RouterModule_sendMessage(struct RouterModule_Promise* promise, Dict* request)
 {
-    struct PingContext* pctx = Identity_cast((struct PingContext*)promise);
+    struct PingContext* pctx = Identity_check((struct PingContext*)promise);
     pctx->messageDict = request;
-    // comes out at sendMsg()
-    Pinger_sendPing(pctx->pp);
+    // actual send is triggered asynchronously
 }
 
-struct RouterModule_Promise* RouterModule_pingNode(struct Node* node,
+struct RouterModule_Promise* RouterModule_pingNode(struct Address* addr,
                                                    uint32_t timeoutMilliseconds,
                                                    struct RouterModule* module,
                                                    struct Allocator* alloc)
 {
     struct RouterModule_Promise* promise =
-        RouterModule_newMessage(node, timeoutMilliseconds, module, alloc);
+        RouterModule_newMessage(addr, timeoutMilliseconds, module, alloc);
     Dict* d = Dict_new(promise->alloc);
     Dict_putString(d, CJDHTConstants_QUERY, CJDHTConstants_QUERY_PING, promise->alloc);
+    RouterModule_sendMessage(promise, d);
+
+    #ifdef Log_DEBUG
+        uint8_t buff[60];
+        Address_print(buff, addr);
+        Log_debug(module->logger, "Sending ping [%u] to [%s]",
+                  ((struct PingContext*)promise)->pp->handle, buff);
+    #endif
+
+    Assert_true(addr->path != 0);
+
+    return promise;
+}
+
+struct RouterModule_Promise* RouterModule_getPeers(struct Address* addr,
+                                                   uint64_t nearbyLabel,
+                                                   uint32_t timeoutMilliseconds,
+                                                   struct RouterModule* module,
+                                                   struct Allocator* alloc)
+{
+    struct RouterModule_Promise* promise =
+        RouterModule_newMessage(addr, timeoutMilliseconds, module, alloc);
+    Dict* d = Dict_new(promise->alloc);
+    Dict_putString(d, CJDHTConstants_QUERY, CJDHTConstants_QUERY_GP, promise->alloc);
+
+    uint64_t nearbyLabel_be = Endian_hostToBigEndian64(nearbyLabel);
+    String* target = String_newBinary((char*)&nearbyLabel_be, 8, promise->alloc);
+    Dict_putString(d, CJDHTConstants_TARGET, target, promise->alloc);
+
     RouterModule_sendMessage(promise, d);
     return promise;
 }
 
-/** See: RouterModule.h */
-struct RouterModule_Promise* RouterModule_search(uint8_t searchTarget[16],
-                                                 struct RouterModule* module,
-                                                 struct Allocator* alloc)
-{
-    return SearchRunner_search(searchTarget, module->searchRunner, alloc);
-}
-
-struct RouterModule_Promise* RouterModule_trace(uint64_t route,
-                                                struct RouterModule* module,
-                                                struct Allocator* alloc)
-{
-    return RouteTracer_trace(route, module->routeTracer, alloc);
-}
-
-/** See: RouterModule.h */
-void RouterModule_addNode(struct RouterModule* module, struct Address* address, uint32_t version)
-{
-    Address_getPrefix(address);
-    NodeStore_addNode(module->nodeStore, address, 1, version);
-    struct Node* best = RouterModule_lookup(address->ip6.bytes, module);
-    if (best && best->address.path != address->path) {
-        RouterModule_pingNode(best, 0, module, module->allocator);
-    }
-}
-
-struct Node* RouterModule_lookup(uint8_t targetAddr[Address_SEARCH_TARGET_SIZE],
+struct Node_Two* RouterModule_lookup(uint8_t targetAddr[Address_SEARCH_TARGET_SIZE],
                                  struct RouterModule* module)
 {
-    struct Address addr;
+    struct Address addr = { .path = 0 };
     Bits_memcpyConst(addr.ip6.bytes, targetAddr, Address_SEARCH_TARGET_SIZE);
 
     return NodeStore_getBest(&addr, module->nodeStore);
 }
 
-/** see RouterModule.h */
-struct Node* RouterModule_getNode(uint64_t path, struct RouterModule* module)
+struct Node_Two* RouterModule_nodeForPath(uint64_t path, struct RouterModule* module)
 {
-    return NodeStore_getNodeByNetworkAddr(path, module->nodeStore);
+    struct Node_Link* link = NodeStore_linkForPath(module->nodeStore, path);
+    if (!link) { return NULL; }
+    return link->child;
 }
 
-int RouterModule_brokenPath(const uint64_t path, struct RouterModule* module)
+void RouterModule_brokenPath(const uint64_t path, struct RouterModule* module)
 {
-    return NodeStore_brokenPath(path, module->nodeStore);
+    NodeStore_brokenPath(path, module->nodeStore);
+}
+
+uint32_t RouterModule_globalMeanResponseTime(struct RouterModule* module)
+{
+    return (uint32_t) AverageRoller_getAverage(module->gmrtRoller);
+}
+
+void RouterModule_peerIsReachable(uint64_t pathToPeer,
+                                  uint64_t lagMilliseconds,
+                                  struct RouterModule* module)
+{
+    Assert_ifParanoid(LabelSplicer_isOneHop(pathToPeer));
+    struct Node_Two* nn = RouterModule_nodeForPath(pathToPeer, module);
+    for (struct Node_Link* peerLink = nn->reversePeers; peerLink; peerLink = peerLink->nextPeer) {
+        if (peerLink->parent != module->nodeStore->selfNode) { continue; }
+        if (peerLink->cannonicalLabel != pathToPeer) { continue; }
+        struct Address address = { .path = 0 };
+        Bits_memcpyConst(&address, &nn->address, sizeof(struct Address));
+        address.path = pathToPeer;
+        NodeStore_discoverNode(module->nodeStore,
+                               &address,
+                               nn->encodingScheme,
+                               peerLink->inverseLinkEncodingFormNumber,
+                               lagMilliseconds);
+        return;
+    }
+    Assert_true(0);
 }

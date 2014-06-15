@@ -12,14 +12,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
+#include "util/events/libuv/UvWrapper.h"
 #include "memory/Allocator.h"
 #include "util/events/libuv/EventBase_pvt.h"
 #include "util/events/Process.h"
 #include "util/Bits.h"
 #include "util/Identity.h"
-
-#include <uv.h>
 
 struct Process_pvt
 {
@@ -30,13 +28,12 @@ struct Process_pvt
 
 static void onFree2(uv_handle_t* process)
 {
-    struct Allocator_OnFreeJob* j = Identity_cast((struct Allocator_OnFreeJob*) process->data);
-    j->complete(j);
+    Allocator_onFreeComplete((struct Allocator_OnFreeJob*) process->data);
 }
 
 static int onFree(struct Allocator_OnFreeJob* job)
 {
-    struct Process_pvt* p = Identity_cast((struct Process_pvt*) job->userData);
+    struct Process_pvt* p = Identity_check((struct Process_pvt*) job->userData);
     uv_process_kill(&p->proc, SIGTERM);
     p->proc.data = job;
     uv_close((uv_handle_t*)&p->proc, onFree2);
@@ -45,7 +42,7 @@ static int onFree(struct Allocator_OnFreeJob* job)
 
 int Process_spawn(char* binaryPath, char** args, struct EventBase* base, struct Allocator* alloc)
 {
-    struct EventBase_pvt* ctx = Identity_cast((struct EventBase_pvt*) base);
+    struct EventBase_pvt* ctx = EventBase_privatize(base);
 
     int i;
     for (i = 0; args[i]; i++) ;
@@ -74,7 +71,7 @@ int Process_spawn(char* binaryPath, char** args, struct EventBase* base, struct 
         .stdio_count = 3
     };
 
-    return uv_spawn(ctx->loop, &p->proc, options);
+    return uv_spawn(ctx->loop, &p->proc, &options);
 }
 
 char* Process_getPath(struct Allocator* alloc)

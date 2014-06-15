@@ -37,9 +37,9 @@ struct AngelContext
     Identity
 };
 
-static void adminExit(Dict* args, void* vcontext, String* txid)
+static void adminExit(Dict* args, void* vcontext, String* txid, struct Allocator* requestAlloc)
 {
-    struct AngelContext* ctx = Identity_cast((struct AngelContext*) vcontext);
+    struct AngelContext* ctx = Identity_check((struct AngelContext*) vcontext);
     Log_info(ctx->logger, "Got request to exit");
     Dict d = Dict_CONST(String_CONST("error"), String_OBJ(String_CONST("none")), NULL);
     Admin_sendMessage(&d, txid, ctx->admin);
@@ -70,9 +70,9 @@ static void adminAddIp2(char* interfaceName,
     Admin_sendMessage(&d, txid, ctx->admin);
 }
 
-static void adminAddIp(Dict* args, void* vcontext, String* txid)
+static void adminAddIp(Dict* args, void* vcontext, String* txid, struct Allocator* requestAlloc)
 {
-    struct AngelContext* ctx = Identity_cast((struct AngelContext*) vcontext);
+    struct AngelContext* ctx = Identity_check((struct AngelContext*) vcontext);
     String* interfaceName = Dict_getString(args, String_CONST("interfaceName"));
     String* address = Dict_getString(args, String_CONST("address"));
     int64_t* prefixLenP = Dict_getInt(args, String_CONST("prefixLen"));

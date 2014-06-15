@@ -12,8 +12,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#define string_strcmp
-#define string_strlen
 #include "admin/testframework/AdminTestFramework.h"
 #include "admin/Admin.h"
 #include "admin/AdminClient.h"
@@ -31,17 +29,17 @@
 #include "util/Assert.h"
 #include "util/log/Log.h"
 #include "util/log/WriterLog.h"
-#include "util/platform/libc/string.h"
 #include "util/events/Timeout.h"
 #include "wire/Ethernet.h"
 #include "wire/Headers.h"
 #include "util/platform/netdev/NetDev.h"
+#include "test/RootTest.h"
 
 #include <stdlib.h>
 
 // On loan from the DoD, thanks guys.
-const uint8_t testAddrA[4] = {11, 0, 0, 1};
-const uint8_t testAddrB[4] = {11, 0, 0, 2};
+static const uint8_t testAddrA[4] = {11, 0, 0, 1};
+static const uint8_t testAddrB[4] = {11, 0, 0, 2};
 
 /*
  * Setup a UDPAddrInterface and a TUNInterface, test sending traffic between them.
@@ -52,7 +50,7 @@ static int receivedMessageTUNCount = 0;
 static uint8_t receiveMessageTUN(struct Message* msg, struct Interface* iface)
 {
     receivedMessageTUNCount++;
-    uint16_t ethertype = TUNMessageType_pop(msg);
+    uint16_t ethertype = TUNMessageType_pop(msg, NULL);
     if (ethertype != Ethernet_TYPE_IP4) {
         printf("Spurious packet with ethertype [%u]\n", Endian_bigEndianToHost16(ethertype));
         return 0;
@@ -60,15 +58,15 @@ static uint8_t receiveMessageTUN(struct Message* msg, struct Interface* iface)
 
     struct Headers_IP4Header* header = (struct Headers_IP4Header*) msg->bytes;
 
-    Assert_always(msg->length == Headers_IP4Header_SIZE + Headers_UDPHeader_SIZE + 12);
+    Assert_true(msg->length == Headers_IP4Header_SIZE + Headers_UDPHeader_SIZE + 12);
 
-    Assert_always(!Bits_memcmp(header->destAddr, testAddrB, 4));
-    Assert_always(!Bits_memcmp(header->sourceAddr, testAddrA, 4));
+    Assert_true(!Bits_memcmp(header->destAddr, testAddrB, 4));
+    Assert_true(!Bits_memcmp(header->sourceAddr, testAddrA, 4));
 
     Bits_memcpyConst(header->destAddr, testAddrA, 4);
     Bits_memcpyConst(header->sourceAddr, testAddrB, 4);
 
-    TUNMessageType_push(msg, ethertype);
+    TUNMessageType_push(msg, ethertype, NULL);
 
     return iface->sendMessage(msg, iface);
 }
@@ -93,8 +91,8 @@ static void fail(void* ignored)
 
 int main(int argc, char** argv)
 {
-    // TODO: fix TUNConfigurator_addIp4Address() for Illumos, Darwin, BSD.
-    #if defined(Illumos) || defined(Darwin) || defined(FreeBSD) || defined(OpenBSD)
+    // TODO(cjd): fix TUNConfigurator_addIp4Address() for Illumos, Darwin, BSD.
+    #if defined(sunos) || defined(darwin) || defined(freebsd)
         return 0;
     #endif
 
@@ -120,8 +118,8 @@ int main(int argc, char** argv)
 
     struct Message* msg;
     Message_STACK(msg, 0, 64);
-    Message_push(msg, "Hello World", 12);
-    Message_push(msg, dest, dest->addrLen);
+    Message_push(msg, "Hello World", 12, NULL);
+    Message_push(msg, dest, dest->addrLen, NULL);
 
     udp->generic.receiveMessage = receiveMessageUDP;
     udp->generic.receiverContext = alloc;
@@ -132,4 +130,5 @@ int main(int argc, char** argv)
     Timeout_setTimeout(fail, NULL, 1000, base, alloc);
 
     EventBase_beginLoop(base);
+    return 0;
 }

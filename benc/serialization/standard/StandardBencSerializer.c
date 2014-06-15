@@ -16,10 +16,10 @@
 #include "memory/Allocator.h"
 #include "io/Reader.h"
 #include "io/Writer.h"
-#include "benc/Object.h"
+#include "benc/Dict.h"
+#include "benc/List.h"
 #include "benc/serialization/BencSerializer.h"
-#define string_strlen
-#include "util/platform/libc/string.h"
+#include "util/CString.h"
 
 #include <stdio.h>
 /* for parseint64_t */
@@ -44,7 +44,7 @@ static int32_t writeint64_t(struct Writer* writer,
 {
     char buffer[32] = {0};
     snprintf(buffer, 32, "%" PRId64, integer);
-    return Writer_write(writer, buffer, strlen(buffer));
+    return Writer_write(writer, buffer, CString_strlen(buffer));
 }
 
 /** @see BencSerializer.h */

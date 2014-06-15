@@ -42,7 +42,7 @@ struct BSDMessageTypeWrapper_pvt
 static uint8_t receiveMessage(struct Message* msg, struct Interface* iface)
 {
     struct BSDMessageTypeWrapper_pvt* ctx =
-        Identity_cast((struct BSDMessageTypeWrapper_pvt*)iface->receiverContext);
+        Identity_check((struct BSDMessageTypeWrapper_pvt*)iface->receiverContext);
 
     if (msg->length < 4) {
         return Error_NONE;
@@ -67,7 +67,8 @@ static uint8_t receiveMessage(struct Message* msg, struct Interface* iface)
 
 static uint8_t sendMessage(struct Message* msg, struct Interface* iface)
 {
-    struct BSDMessageTypeWrapper_pvt* ctx = Identity_cast((struct BSDMessageTypeWrapper_pvt*)iface);
+    struct BSDMessageTypeWrapper_pvt* ctx =
+        Identity_check((struct BSDMessageTypeWrapper_pvt*)iface);
 
     Assert_true(msg->length >= 4);
 
@@ -78,7 +79,7 @@ static uint8_t sendMessage(struct Message* msg, struct Interface* iface)
     } else if (ethertype == Ethernet_TYPE_IP4) {
         afType_be = ctx->afInet_be;
     } else {
-        Assert_always(!"Unsupported ethertype");
+        Assert_true(!"Unsupported ethertype");
     }
     ((uint16_t*) msg->bytes)[0] = 0;
     ((uint16_t*) msg->bytes)[1] = afType_be;

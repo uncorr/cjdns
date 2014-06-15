@@ -27,20 +27,21 @@ struct Context
     struct Allocator* alloc;
     struct InterfaceController* ic;
     struct Admin* admin;
+    Identity
 };
 
 // typical peer record is around 140 benc chars, so can't have very many in 1023
 #define ENTRIES_PER_PAGE 6
-static void adminPeerStats(Dict* args, void* vcontext, String* txid)
+static void adminPeerStats(Dict* args, void* vcontext, String* txid, struct Allocator* requestAlloc)
 {
-    struct Context* context = vcontext;
+    struct Context* context = Identity_check((struct Context*)vcontext);
     struct Allocator* alloc = Allocator_child(context->alloc);
     struct InterfaceController_peerStats* stats = NULL;
 
     int64_t* page = Dict_getInt(args, String_CONST("page"));
     int i = (page) ? *page * ENTRIES_PER_PAGE : 0;
 
-    int count = context->ic->getPeerStats(context->ic, alloc, &stats);
+    int count = InterfaceController_getPeerStats(context->ic, alloc, &stats);
 
     String* bytesIn = String_CONST("bytesIn");
     String* bytesOut = String_CONST("bytesOut");
@@ -50,6 +51,10 @@ static void adminPeerStats(Dict* args, void* vcontext, String* txid)
     String* switchLabel = String_CONST("switchLabel");
     String* isIncoming = String_CONST("isIncoming");
     String* user = String_CONST("user");
+
+    String* duplicates = String_CONST("duplicates");
+    String* lostPackets = String_CONST("lostPackets");
+    String* receivedOutOfRange = String_CONST("receivedOutOfRange");
 
     List* list = NULL;
     for (int counter=0; i < count && counter++ < ENTRIES_PER_PAGE; i++) {
@@ -68,6 +73,9 @@ static void adminPeerStats(Dict* args, void* vcontext, String* txid)
         Dict_putString(d, switchLabel, String_new((char*)labelStack, alloc), alloc);
 
         Dict_putInt(d, isIncoming, stats[i].isIncomingConnection, alloc);
+        Dict_putInt(d, duplicates, stats[i].duplicates, alloc);
+        Dict_putInt(d, lostPackets, stats[i].lostPackets, alloc);
+        Dict_putInt(d, receivedOutOfRange, stats[i].receivedOutOfRange, alloc);
 
         if (stats[i].isIncomingConnection) {
             Dict_putString(d, user, stats[i].user, alloc);
@@ -92,10 +100,12 @@ static void adminPeerStats(Dict* args, void* vcontext, String* txid)
     Allocator_free(alloc);
 }
 
-static void adminDisconnectPeer(Dict* args, void* vcontext, String* txid)
+static void adminDisconnectPeer(Dict* args,
+                                void* vcontext,
+                                String* txid,
+                                struct Allocator* requestAlloc)
 {
-    struct Context* context = vcontext;
-    struct Allocator* alloc = Allocator_child(context->alloc);
+    struct Context* context = Identity_check((struct Context*)vcontext);
     String* pubkeyString = Dict_getString(args, String_CONST("pubkey"));
 
     // parse the key
@@ -106,25 +116,52 @@ static void adminDisconnectPeer(Dict* args, void* vcontext, String* txid)
     char* errorMsg = NULL;
     if (error) {
         errorMsg = "bad key";
-    }
-    else {
-      //  try to remove the peer if the key is valid
-      error = context->ic->disconnectPeer(context->ic,pubkey);
-      if (error) {
-          errorMsg = "no peer found for that key";
-      }
+    } else {
+        //  try to remove the peer if the key is valid
+        error = InterfaceController_disconnectPeer(context->ic,pubkey);
+        if (error) {
+            errorMsg = "no peer found for that key";
+        }
     }
 
-    Dict* response = Dict_new(alloc);
-    Dict_putInt(response, String_CONST("sucess"), error ? 0 : 1, alloc);
+    Dict* response = Dict_new(requestAlloc);
+    Dict_putInt(response, String_CONST("success"), error ? 0 : 1, requestAlloc);
     if (error) {
-        Dict_putString(response, String_CONST("error"), String_CONST(errorMsg), alloc);
+        Dict_putString(response, String_CONST("error"), String_CONST(errorMsg), requestAlloc);
     }
 
     Admin_sendMessage(response, txid, context->admin);
-
-    Allocator_free(alloc);
 }
+/*
+static resetSession(Dict* args, void* vcontext, String* txid, struct Allocator* requestAlloc)
+{
+    struct Context* context = Identity_check((struct Context*)vcontext);
+    String* pubkeyString = Dict_getString(args, String_CONST("pubkey"));
+
+    // parse the key
+    uint8_t pubkey[32];
+    uint8_t addr[16];
+    int error = Key_parse(pubkeyString, pubkey, addr);
+
+    char* errorMsg = NULL;
+    if (error) {
+        errorMsg = "bad key";
+    } else {
+        //  try to remove the peer if the key is valid
+        error = InterfaceController_disconnectPeer(context->ic,pubkey);
+        if (error) {
+            errorMsg = "no peer found for that key";
+        }
+    }
+
+    Dict* response = Dict_new(requestAlloc);
+    Dict_putInt(response, String_CONST("success"), error ? 0 : 1, requestAlloc);
+    if (error) {
+        Dict_putString(response, String_CONST("error"), String_CONST(errorMsg), requestAlloc);
+    }
+
+    Admin_sendMessage(response, txid, context->admin);
+}*/
 
 void InterfaceController_admin_register(struct InterfaceController* ic,
                                         struct Admin* admin,
@@ -135,6 +172,7 @@ void InterfaceController_admin_register(struct InterfaceController* ic,
         .ic = ic,
         .admin = admin
     }));
+    Identity_set(ctx);
 
     Admin_registerFunction("InterfaceController_peerStats", adminPeerStats, ctx, true,
         ((struct Admin_FunctionArg[]) {
